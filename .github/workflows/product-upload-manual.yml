@@ -1,0 +1,66 @@
+name: Product Upload (Manual)
+
+# Manual trigger only - no schedule
+on:
+  workflow_dispatch:
+    inputs:
+      sets_to_upload:
+        description: 'Sets to upload (comma-separated, e.g. sv10,sv11 or leave blank for all)'
+        required: false
+        default: ''
+      min_price:
+        description: 'Minimum price (CAD)'
+        required: false
+        default: '25.00'
+
+jobs:
+  upload-products:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run product upload script
+        env:
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+          SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          POKEMONTCG_API_URL: ${{ secrets.POKEMONTCG_API_URL }}
+          TCG_API_KEY: ${{ secrets.TCG_API_KEY }}
+          USD_TO_CAD: "1.35"
+          MARKUP: "1.10"
+          MIN_PRICE_CAD: ${{ github.event.inputs.min_price }}
+          SHOPIFY_API_VERSION: "2025-01"
+        run: |
+          echo "Starting product upload..."
+          echo "Sets to upload: ${{ github.event.inputs.sets_to_upload }}"
+          echo "Minimum price: ${{ github.event.inputs.min_price }}"
+          python bulk_upload_corrected.py
+      
+      - name: Upload progress logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-progress
+          path: "bulk_upload_progress.json"
+          if-no-files-found: ignore
+      
+      - name: Upload error logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-logs
+          path: "*.log"
+          if-no-files-found: ignore
