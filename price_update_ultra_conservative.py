@@ -58,9 +58,9 @@ MIN_CHANGE_PERCENT = 5.0    # AND at least 5%
 BIG_CHANGE_PERCENT = 20.0   # 20% or more
 BIG_CHANGE_DOLLARS = 10.0   # AND at least $10
 
-# Processing Config - ULTRA CONSERVATIVE
-BATCH_SIZE = 3    # Tiny batches
-API_DELAY = 20    # Very long wait between batches
+# Processing Config - Optimized for GitHub Actions (6-hour limit)
+BATCH_SIZE = 10   # Balanced batch size
+API_DELAY = 5     # Reasonable wait between batches
 
 
 def round_up_to_nearest_50_cents(amount):
@@ -166,11 +166,11 @@ def fetch_api_price(external_id, retries=5):
     
     for attempt in range(retries):
         try:
-            # Always wait before making request (be EXTREMELY nice to API)
+            # Always wait before making request (be very nice to API)
             if attempt == 0:
-                time.sleep(5)  # 5 second delay before first attempt
+                time.sleep(3)  # 3 second delay before first attempt
             else:
-                wait_time = 20 * attempt  # 20s, 40s, 60s, 80s
+                wait_time = 15 * attempt  # 15s, 30s, 45s, 60s
                 print(f" (retry {attempt+1}/{retries}, waiting {wait_time}s)...", end='', flush=True)
                 time.sleep(wait_time)
             
@@ -526,8 +526,8 @@ def main():
                 stats['no_change'] += 1
                 print(f" ⏭️  No change")
             
-            # Very long delay between each card for maximum API reliability
-            time.sleep(3)  # 3 seconds between each card
+            # Longer delay between each card for API reliability
+            time.sleep(2)  # Increased from 1 second
         
         # Delay between batches
         if batch_num < total_batches - 1:
