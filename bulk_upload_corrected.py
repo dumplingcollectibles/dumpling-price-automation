@@ -1,11 +1,10 @@
 """
-IMPROVED Bulk Upload Script: High-value cards from 2020+ ($100+ CAD)
+CORRECTED Bulk Upload Script - Properly Handles Retries
 
-FIXES:
-- Better retry logic for API timeouts
-- Adds "Pokemon Singles" collection tag
-- Better error handling
-- Progress indicators
+FIX:
+- Sets with 0 eligible cards are now marked as FAILED (not completed)
+- This allows retry in case API didn't return all cards
+- Progress tracking fixed to remove failed sets when they succeed
 """
 
 import requests
@@ -15,6 +14,8 @@ import os
 from dotenv import load_dotenv
 import time
 import math
+import json
+from datetime import datetime
 
 load_dotenv()
 
@@ -33,17 +34,58 @@ if SHOPIFY_SHOP_URL and not SHOPIFY_SHOP_URL.startswith('https://'):
     SHOPIFY_SHOP_URL = f"https://{SHOPIFY_SHOP_URL}"
 
 # Pricing Config
-USD_TO_CAD = 1.35
-MARKUP = 1.10
-MIN_PRICE_CAD = 25.00
+USD_TO_CAD = float(os.getenv('USD_TO_CAD', '1.35'))
+MARKUP = float(os.getenv('MARKUP', '1.10'))
+MIN_PRICE_CAD = float(os.getenv('MIN_PRICE_CAD', '25.00'))
 
-# Modern sets - ALL sets from 2020 to present (swsh1 to me2)
-MODERN_SETS = ['sv6', 'sv8']
+# Progress tracking file
+PROGRESS_FILE = "bulk_upload_progress.json"
 
+# Modern sets - Default list (all modern sets 2020-2025)
+DEFAULT_MODERN_SETS = [
+    'swsh8', 'swsh9', 'swsh10', 'swsh12','cel25c','swsh12tg',
+    'swsh12pt5', 'pgo',
+    'sv1', 'sv2', 'sv3', 'sv4', 'sv5', 'sv6', 'sv7', 'sv8', 'sv8pt5', 'sv9', 'sv10','rsv10pt5','zsv10pt5','me1','me2', 'svp', 
+    'sv3pt5', 'sv4pt5', 'sv6pt5','fut20','swshp'
+]
+
+# Check if specific sets provided via environment variable (from GitHub Actions input)
+sets_input = os.getenv('SETS_TO_UPLOAD', '').strip()
+if sets_input:
+    # Split by comma and clean up whitespace
+    MODERN_SETS = [s.strip() for s in sets_input.split(',') if s.strip()]
+    print(f"📌 Using provided sets: {', '.join(MODERN_SETS)}")
+else:
+    MODERN_SETS = DEFAULT_MODERN_SETS
+    print(f"📌 Using default set list ({len(MODERN_SETS)} sets)")
+
+
+
+def load_progress():
+    """Load completed sets from previous runs"""
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {"completed_sets": [], "failed_sets": [], "last_run": None}
+    return {"completed_sets": [], "failed_sets": [], "last_run": None}
+
+
+def save_progress(completed_sets, failed_sets):
+    """Save progress after each set"""
+    progress = {
+        "completed_sets": completed_sets,
+        "failed_sets": failed_sets,
+        "last_run": datetime.now().isoformat()
+    }
+    with open(PROGRESS_FILE, 'w') as f:
+        json.dump(progress, f, indent=2)
 
 
 def round_up_to_nearest_50_cents(amount):
     return math.ceil(amount * 2) / 2
+
 
 def extract_market_price(api_card):
     tcgplayer = api_card.get('tcgplayer', {})
@@ -55,6 +97,7 @@ def extract_market_price(api_card):
             if market and market > 0:
                 return float(market)
     return None
+
 
 def transform_card_data(api_card, market_price_usd):
     if market_price_usd:
@@ -80,6 +123,7 @@ def transform_card_data(api_card, market_price_usd):
         'nm_selling_price': nm_selling_price
     }
 
+
 def calculate_buylist_prices(market_price, condition, nm_buy_cash=None, nm_buy_credit=None):
     if condition in ['HP', 'DMG']:
         return None, None
@@ -98,6 +142,7 @@ def calculate_buylist_prices(market_price, condition, nm_buy_cash=None, nm_buy_c
         return round(nm_buy_cash * 0.50, 2), round(nm_buy_credit * 0.50, 2)
     return None, None
 
+
 def insert_card_to_database(card_info):
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
@@ -110,7 +155,10 @@ def insert_card_to_database(card_info):
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name, set_code, number, variant, language) 
-            DO UPDATE SET external_ids = EXCLUDED.external_ids, img_url = EXCLUDED.img_url, updated_at = NOW()
+            DO UPDATE SET 
+                external_ids = EXCLUDED.external_ids, 
+                img_url = EXCLUDED.img_url, 
+                updated_at = NOW()
             RETURNING id;
         """, (
             Json(card_info['external_ids']), card_info['name'], card_info['set_code'],
@@ -124,7 +172,9 @@ def insert_card_to_database(card_info):
         existing = cursor.fetchone()
         
         if existing and existing[1]:
-            conn.rollback()
+            conn.commit()
+            cursor.close()
+            conn.close()
             return None
         
         if not existing:
@@ -159,8 +209,11 @@ def insert_card_to_database(card_info):
                 INSERT INTO variants (product_id, condition, sku, inventory_qty, market_price, buy_cash, buy_credit, price_cad)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (sku) DO UPDATE SET
-                    market_price = EXCLUDED.market_price, buy_cash = EXCLUDED.buy_cash,
-                    buy_credit = EXCLUDED.buy_credit, price_cad = EXCLUDED.price_cad, updated_at = NOW()
+                    market_price = EXCLUDED.market_price, 
+                    buy_cash = EXCLUDED.buy_cash,
+                    buy_credit = EXCLUDED.buy_credit, 
+                    price_cad = EXCLUDED.price_cad, 
+                    updated_at = NOW()
                 RETURNING id;
             """, (product_id, condition, sku, 0, base_market, buy_cash, buy_credit, selling_price))
             
@@ -169,12 +222,14 @@ def insert_card_to_database(card_info):
         
         conn.commit()
         return {'card_id': card_id, 'product_id': product_id, 'variant_ids': variant_ids, 'card_info': card_info}
+    
     except Exception as e:
         conn.rollback()
         return None
     finally:
         cursor.close()
         conn.close()
+
 
 def create_shopify_product(db_result):
     if not SHOPIFY_ACCESS_TOKEN:
@@ -187,7 +242,7 @@ def create_shopify_product(db_result):
             "body_html": f"<p>Set: {card_info['set_name']}<br>Card Number: {card_info['number']}<br>Rarity: {card_info['rarity']}</p>",
             "vendor": "Pokemon",
             "product_type": "Trading Card - Single",
-            "tags": f"Pokemon Singles, {card_info['set_name']}, {card_info['rarity']}, Singles, High Value",  # ADDED "Pokemon Singles"
+            "tags": f"Pokemon Singles, {card_info['set_name']}, {card_info['rarity']}, Singles",
             "status": "active",
             "images": [{"src": card_info['img_url']}],
             "options": [{"name": "Condition"}],
@@ -208,7 +263,6 @@ def create_shopify_product(db_result):
         if response.status_code == 201:
             shopify_product = response.json()['product']
             
-            # Set inventory to 0
             if SHOPIFY_LOCATION_ID:
                 for variant in shopify_product['variants']:
                     try:
@@ -221,7 +275,6 @@ def create_shopify_product(db_result):
                     except:
                         pass
             
-            # Store Shopify IDs
             conn = psycopg2.connect(DATABASE_URL)
             cursor = conn.cursor()
             try:
@@ -240,16 +293,17 @@ def create_shopify_product(db_result):
             return shopify_product
     except:
         pass
+    
     return None
+
 
 def fetch_cards_from_set(set_code, max_retries=5):
     """
-    PAGINATION VERSION: Fetch ALL cards from a set (even sets with 300+ cards)
-    Fetches 100 cards at a time and loops through all pages
+    Fetch with smaller page size (50) and longer waits for better reliability
     """
     all_cards = []
     page = 1
-    page_size = 50  # Fetch 100 at a time for reliability
+    page_size = 50
     
     print(f"   🔍 Fetching cards from {set_code}...")
     
@@ -262,11 +316,13 @@ def fetch_cards_from_set(set_code, max_retries=5):
             "pageSize": page_size
         }
         
+        success = False
+        
         for attempt in range(1, max_retries + 1):
             try:
                 if attempt > 1:
-                    wait_time = attempt * 5
-                    print(f"      ⏳ Retry {attempt}/{max_retries} in {wait_time}s...")
+                    wait_time = attempt * 10
+                    print(f"      ⏳ Retry {attempt}/{max_retries} (page {page}) in {wait_time}s...")
                     time.sleep(wait_time)
                 
                 response = requests.get(url, headers=headers, params=params, timeout=90)
@@ -278,84 +334,115 @@ def fetch_cards_from_set(set_code, max_retries=5):
                     
                     if page == 1:
                         print(f"   📊 Set has {total_count} total cards")
-                        if total_count > 250:
-                            print(f"   ⚠️  IMPORTANT: This set has 250+ cards, using pagination to capture ALL cards!")
                     
                     if cards:
                         all_cards.extend(cards)
-                        print(f"   ✅ Page {page}: Fetched {len(cards)} cards (Total so far: {len(all_cards)}/{total_count})")
+                        print(f"   ✅ Page {page}: Fetched {len(cards)} cards (Total: {len(all_cards)}/{total_count})")
                         
-                        # Check if we've gotten all cards
                         if len(all_cards) >= total_count:
-                            print(f"   🎉 Complete! Fetched all {len(all_cards)} cards from {set_code}")
+                            print(f"   🎉 Complete! Fetched all {len(all_cards)} cards")
                             return all_cards
                         
-                        # Move to next page
                         page += 1
-                        break  # Break retry loop, continue to next page
+                        success = True
+                        break
                     else:
-                        # No more cards
                         if len(all_cards) > 0:
-                            print(f"   ✅ Complete! Fetched {len(all_cards)} cards from {set_code}")
+                            print(f"   ✅ Complete! Fetched {len(all_cards)} cards")
                             return all_cards
                         else:
-                            print(f"   ⚠️  No cards found for {set_code}")
+                            if page == 1:
+                                print(f"   ⚠️  No cards found in {set_code}")
                             return []
                 
                 elif response.status_code == 404:
-                    print(f"   ❌ Set '{set_code}' not found in API (404)")
-                    return all_cards if all_cards else []
+                    if page == 1:
+                        if attempt >= max_retries:
+                            print(f"   ❌ Set '{set_code}' not found (404 after {max_retries} retries)")
+                            return []
+                        print(f"   ⚠️  404 on page 1, attempt {attempt}/{max_retries} (might be API hiccup)")
+                        continue
+                    else:
+                        if attempt >= max_retries:
+                            print(f"   ✅ Assuming end of data. Fetched {len(all_cards)} cards total")
+                            return all_cards
+                        continue
+                
                 else:
-                    print(f"   ⚠️  API error {response.status_code} on page {page}, attempt {attempt}/{max_retries}")
                     if attempt >= max_retries:
-                        print(f"   ⚠️  Failed to fetch page {page}, returning {len(all_cards)} cards fetched so far")
-                        return all_cards
+                        if len(all_cards) > 0:
+                            print(f"   ⚠️  Returning {len(all_cards)} cards fetched so far")
+                            return all_cards
+                        else:
+                            return []
                         
             except requests.exceptions.Timeout:
-                print(f"   ⏰ Timeout on page {page}, attempt {attempt}/{max_retries}")
                 if attempt >= max_retries:
-                    print(f"   ⚠️  Timeout on page {page}, returning {len(all_cards)} cards fetched so far")
-                    return all_cards
+                    if len(all_cards) > 0:
+                        print(f"   ⚠️  Timeout - returning {len(all_cards)} cards fetched so far")
+                        return all_cards
+                    else:
+                        return []
+            
             except Exception as e:
-                print(f"   ❌ Error on page {page}: {str(e)[:100]}")
                 if attempt >= max_retries:
                     return all_cards
         
-        # Small delay between pages to be nice to the API
-        time.sleep(1)
+        if not success:
+            if len(all_cards) > 0:
+                print(f"   ⚠️  Failed page {page}. Returning {len(all_cards)} cards")
+                return all_cards
+            else:
+                return []
+        
+        time.sleep(3)
     
     return all_cards
 
+
 def bulk_upload_high_value_cards():
-    """Main function with improved error handling"""
+    progress = load_progress()
+    completed = set(progress["completed_sets"])
+    failed = set(progress["failed_sets"])
+    
+    remaining_sets = [s for s in MODERN_SETS if s not in completed]
     
     print("=" * 100)
-    print("🚀 BULK UPLOAD: High-Value Pokemon Singles ($100+ CAD)")
+    print("🚀 BULK UPLOAD: Pokemon Singles ($25+ CAD) - WITH RESUME")
     print("=" * 100)
-    print(f"\nTarget: Cards worth ${MIN_PRICE_CAD:.2f}+ CAD from {len(MODERN_SETS)} modern sets")
-    print(f"Collection: Pokemon Singles")
-    print(f"Sets to process: {', '.join(MODERN_SETS)}\n")
+    
+    if progress["last_run"]:
+        print(f"\n📂 Previous run: {progress['last_run']}")
+        print(f"   ✅ Completed: {len(completed)} sets")
+        print(f"   ❌ Failed: {len(failed)} sets")
+        print(f"   ⏳ Remaining: {len(remaining_sets)} sets")
+    
+    print(f"\n💡 TIP: For best results, run between 11pm-6am when API is faster!")
+    print(f"Target: ${MIN_PRICE_CAD:.2f}+ CAD cards\n")
     
     total_fetched = 0
     total_eligible = 0
     total_uploaded = 0
     total_skipped = 0
-    failed_sets = []
+    new_failed = []
+    new_completed = []
     
-    for i, set_code in enumerate(MODERN_SETS, 1):
+    for i, set_code in enumerate(remaining_sets, 1):
         print(f"\n{'='*100}")
-        print(f"[{i}/{len(MODERN_SETS)}] Processing Set: {set_code}")
+        print(f"[{i}/{len(remaining_sets)}] Processing: {set_code}")
         print('='*100)
         
         cards = fetch_cards_from_set(set_code)
         
         if not cards:
-            print(f"   ⚠️  SKIPPING {set_code}: No cards fetched (API timeout or empty set)")
-            failed_sets.append(set_code)
+            print(f"   ⚠️  SKIPPING {set_code}: No cards fetched (API issue)")
+            new_failed.append(set_code)
+            all_completed = completed | set(new_completed)
+            all_failed = (failed | set(new_failed)) - all_completed
+            save_progress(list(all_completed), list(all_failed))
             continue
         
         total_fetched += len(cards)
-        
         set_uploaded = 0
         set_eligible = 0
         
@@ -364,7 +451,6 @@ def bulk_upload_high_value_cards():
             if not market_usd:
                 continue
             
-            # Check if meets minimum price
             base_cad = market_usd * USD_TO_CAD
             nm_price = round_up_to_nearest_50_cents(base_cad * MARKUP)
             
@@ -381,7 +467,6 @@ def bulk_upload_high_value_cards():
             
             if not db_result:
                 total_skipped += 1
-                print(f"      ℹ️  Already exists, skipped")
                 continue
             
             shopify_result = create_shopify_product(db_result)
@@ -389,30 +474,40 @@ def bulk_upload_high_value_cards():
             if shopify_result:
                 total_uploaded += 1
                 set_uploaded += 1
-                print(f"      ✅ Uploaded to Shopify (Collection: Pokemon Singles)")
+                print(f"      ✅ Uploaded")
             
-            time.sleep(0.5)  # Rate limiting
+            time.sleep(0.5)
         
-        print(f"\n   📊 Set Summary: Found {set_eligible} cards over ${MIN_PRICE_CAD:.2f}, uploaded {set_uploaded} new cards")
+        # FIXED LOGIC: Only mark as completed if we found eligible cards
+        if set_eligible > 0:
+            # Success - found cards to upload
+            new_completed.append(set_code)
+            print(f"\n   ✅ Set completed: {set_eligible} eligible, {set_uploaded} uploaded")
+        else:
+            # No eligible cards - might be incomplete API data, mark as failed to retry
+            print(f"\n   ⚠️  No cards over ${MIN_PRICE_CAD:.2f} found - marking for retry")
+            new_failed.append(set_code)
+        
+        # Save progress with proper cleanup
+        all_completed = completed | set(new_completed)
+        all_failed = (failed | set(new_failed)) - all_completed  # Remove completed from failed
+        save_progress(list(all_completed), list(all_failed))
     
     print("\n" + "=" * 100)
-    print("📊 BULK UPLOAD COMPLETE!")
+    print("📊 COMPLETE!")
     print("=" * 100)
-    print(f"Total cards fetched:     {total_fetched}")
-    print(f"Cards over ${MIN_PRICE_CAD:.2f}:      {total_eligible}")
-    print(f"Successfully uploaded:   {total_uploaded}")
-    print(f"Skipped (already exist): {total_skipped}")
+    print(f"Total fetched:       {total_fetched}")
+    print(f"Over ${MIN_PRICE_CAD:.2f}:          {total_eligible}")
+    print(f"Uploaded:            {total_uploaded}")
+    print(f"Skipped:             {total_skipped}")
+    print(f"Failed sets:         {len(new_failed)}")
     
-    if failed_sets:
-        print(f"\n⚠️  Failed/Skipped Sets ({len(failed_sets)}):")
-        for s in failed_sets:
-            print(f"   - {s}")
-        print("\n💡 These sets likely timed out. You can:")
-        print("   1. Run the script again (it will only process failed sets)")
-        print("   2. Process them individually with lower card counts")
-        print("   3. Wait 10-15 minutes and try again when API is less busy")
+    if new_failed:
+        print(f"\n⚠️  Failed: {', '.join(new_failed)}")
+        print("\n💡 These sets will be retried on next run!")
     
     print("=" * 100)
+
 
 if __name__ == "__main__":
     bulk_upload_high_value_cards()
