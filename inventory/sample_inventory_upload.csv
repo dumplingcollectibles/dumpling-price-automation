@@ -1,0 +1,11 @@
+card_name,set_code,card_number,condition,quantity,unit_cost,source,notes
+Charizard VMAX,swsh1,142,NM,2,80.00,buylist,Bought from customer John Doe
+Pikachu VMAX,swsh4,44,LP,1,45.00,buylist,Minor whitening on back edge
+Mewtwo V,sv3,78,NM,3,25.00,wholesale,TCGPlayer bulk order #12345
+Umbreon ex,sv6,205,NM,1,150.00,trade,Traded with local collector
+Garchomp ex,sv8,123,NM,2,35.00,opening,Pulled from booster box
+Lucario VSTAR,swsh12,100,MP,1,12.00,personal,From personal collection
+Rayquaza VMAX,swsh7,111,NM,1,95.00,buylist,Customer trade-in
+Eevee,sv1,183,NM,5,3.50,wholesale,Bulk common/uncommon lot
+Mew ex,sv4pt5,151,LP,1,45.00,buylist,Light play condition verified
+Lechonk,sv1,196,DMG,2,0.50,opening,Damaged pulls - heavily played
