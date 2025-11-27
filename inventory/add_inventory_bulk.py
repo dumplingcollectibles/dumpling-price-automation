@@ -520,36 +520,28 @@ def main():
     # Process rows
     print(f"\n⏳ Processing {len(valid_rows)} cards...\n")
     
-    # Check for cards needing API fetch
-    needs_fetch = [item for item in valid_rows if item['data'].get('needs_api_fetch')]
+    # Track all failures
+    failed_rows = []
     
-    if needs_fetch:
-        print(f"⏳ {len(needs_fetch)} card(s) not in database - fetching from API...")
+    # Skip API fetch - just check if all cards exist in database
+    cards_not_in_db = [item for item in valid_rows if item['data'].get('needs_api_fetch')]
+    
+    if cards_not_in_db:
+        print(f"⚠️  {len(cards_not_in_db)} card(s) not in database - these will be skipped\n")
         
-        for item in needs_fetch:
+        for item in cards_not_in_db:
             data = item['data']
             row = data['original_row']
             
-            print(f"  [{needs_fetch.index(item)+1}/{len(needs_fetch)}] Fetching {row['card_name']} ({row['set_code']}-{row['card_number']})...", end=' ')
+            print(f"  ❌ Row {item['row_num']}: {row['card_name']} ({row['set_code']}-{row['card_number']}) - Not in database")
             
-            api_card = fetch_card_from_api(row['set_code'], row['card_number'])
-            
-            if api_card:
-                market_price = extract_market_price(api_card)
-                card_id = create_card_in_database(api_card, market_price)
-                
-                if card_id:
-                    data['card_id'] = card_id
-                    data['needs_api_fetch'] = False
-                    print("✅")
-                else:
-                    print("❌ Failed to add to database")
-                    item['skip'] = True
-            else:
-                print("❌ Not found in API")
-                item['skip'] = True
-            
-            time.sleep(0.5)  # Rate limit
+            item['skip'] = True
+            # Track this failure
+            failed_rows.append({
+                'row_num': item['row_num'],
+                'data': row,
+                'reason': 'Card not in database - run product upload script first to add this card'
+            })
         
         print()
     
@@ -575,6 +567,12 @@ def main():
         
         if not variant:
             print(f"  [{i}/{len(valid_rows)}] ❌ Variant not found for row {item['row_num']}")
+            # Track this failure
+            failed_rows.append({
+                'row_num': item['row_num'],
+                'data': row,
+                'reason': f'Variant not found for condition: {data["condition"]} - database error'
+            })
             continue
         
         # Calculate new values
@@ -620,8 +618,6 @@ def main():
     print(f"\nSummary:")
     print(f"• Cards processed: {success_count}")
     print(f"• Units added: {total_units} total")
-    if needs_fetch:
-        print(f"• New cards added to DB: {len([i for i in needs_fetch if not i.get('skip')])}")
     print(f"• Total value: ${total_value:.2f}")
     print(f"• Total cost: ${total_cost:.2f}")
     if total_cost > 0:
@@ -631,9 +627,32 @@ def main():
     if transaction_ids:
         print(f"\nTransaction IDs: #{transaction_ids[0]}-#{transaction_ids[-1]}")
     
+    # Export validation errors
     if error_rows:
-        print(f"\n📄 Errors saved to: errors_{os.path.basename(filename)}")
+        print(f"\n📄 Validation errors saved to: errors_{os.path.basename(filename)}")
         print("   Fix errors and re-run with the error file")
+    
+    # Export processing failures
+    if failed_rows:
+        failed_filename = f"failed_{os.path.basename(filename).replace('.csv', '')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        with open(failed_filename, 'w', newline='', encoding='utf-8') as f:
+            fieldnames = list(failed_rows[0]['data'].keys()) + ['failure_reason']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for item in failed_rows:
+                row_data = item['data'].copy()
+                row_data['failure_reason'] = item['reason']
+                writer.writerow(row_data)
+        
+        print(f"\n📄 Failed rows exported to: {failed_filename}")
+        print(f"   {len(failed_rows)} row(s) could not be processed")
+        print(f"\n   Common reasons:")
+        for item in failed_rows[:5]:
+            print(f"   • Row {item['row_num']}: {item['reason']}")
+        if len(failed_rows) > 5:
+            print(f"   ... and {len(failed_rows) - 5} more (see CSV for details)")
     
     print("\n" + "=" * 70)
     print()
