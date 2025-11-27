@@ -1,400 +1,489 @@
-# Inventory Management System
+# Dumpling Collectibles - Automation Suite
 
-Professional inventory management for Dumpling Collectibles with weighted average cost tracking and Shopify sync.
+Automated tools for managing a Pokémon card e-commerce business on Shopify.
 
 ---
 
-## 🎯 Features
+## 🎯 What This Does
 
-- ✅ Single card entry (interactive CLI)
-- ✅ Bulk CSV upload (batch processing)
-- ✅ Weighted average cost tracking
+Complete automation for:
+- ✅ Daily price updates from market data
+- ✅ Product uploads to Shopify
+- ✅ Inventory management with cost tracking
 - ✅ Automatic Shopify sync
-- ✅ Complete audit trail
-- ✅ Error detection & reporting
-- ✅ Failed rows export
 
 ---
 
-## 📦 Files
+## 📦 Features
 
-### **Scripts**
+### **1. Price Automation** 
+**Location:** Root directory
 
-- **`add_inventory_single.py`** - Add cards one at a time (interactive)
-- **`add_inventory_bulk.py`** - Upload multiple cards from CSV
-- **`csv_validator.py`** - Validation helper module
-- **`test_inventory_setup.py`** - Pre-flight setup check
+- Daily price updates from PokemonTCG API
+- Buylist pricing calculation
+- Shopify sync
+- Email reports
 
-### **Templates**
+**Files:**
+- `price_update_ultra_conservative.py` - Main price update script
+- `.github/workflows/daily-price-update.yml` - Daily automation
 
-- **`sample_inventory_upload.csv`** - Example CSV format
+**Usage:**
+```bash
+# Manual run
+python price_update_ultra_conservative.py
+
+# Automatic (GitHub Actions)
+Runs daily at 3 AM EST
+```
+
+---
+
+### **2. Product Upload**
+**Location:** Root directory
+
+- Bulk product creation
+- Multi-condition variants (NM/LP/MP/HP/DMG)
+- Set-based uploads
+- Draft product creation
+
+**Files:**
+- `bulk_upload_corrected.py` - Main upload script
+- `.github/workflows/product-upload-manual.yml` - Manual trigger workflow
+
+**Usage:**
+```bash
+# Upload specific sets
+python bulk_upload_corrected.py
+
+# Via GitHub Actions
+Use workflow_dispatch with set codes
+```
+
+---
+
+### **3. Inventory Management** ⭐ **NEW!**
+**Location:** `inventory/` folder
+
+- Single card entry (interactive)
+- Bulk CSV upload
+- Weighted average cost tracking
+- Complete audit trail
+- Shopify inventory sync
+
+**Files:**
+- `inventory/add_inventory_single.py` - One-by-one entry
+- `inventory/add_inventory_bulk.py` - CSV batch upload
+- `inventory/csv_validator.py` - Validation helper
+- `inventory/test_inventory_setup.py` - Setup checker
+
+**Usage:**
+```bash
+# Single card
+python inventory/add_inventory_single.py
+
+# Bulk upload
+python inventory/add_inventory_bulk.py buylist.csv
+```
+
+**See:** [inventory/README.md](inventory/README.md) for full documentation
 
 ---
 
 ## 🚀 Quick Start
 
-### **1. Install Dependencies**
+### **1. Clone Repository**
 
 ```bash
-pip install psycopg2-binary requests python-dotenv
+git clone https://github.com/yourusername/dumpling-price-automation.git
+cd dumpling-price-automation
 ```
 
-### **2. Configure Environment**
-
-Create `.env` file in project root:
+### **2. Install Dependencies**
 
 ```bash
-# Database (Required)
+pip install -r requirements.txt
+```
+
+### **3. Configure Environment**
+
+Create `.env` file:
+
+```bash
+# Database
 NEON_DB_URL=postgresql://user:pass@host/db?sslmode=require
 
-# Shopify (Required for sync)
+# Shopify
 SHOPIFY_SHOP_URL=https://your-store.myshopify.com
 SHOPIFY_ACCESS_TOKEN=shpat_xxxxx
 SHOPIFY_LOCATION_ID=123456789
 SHOPIFY_API_VERSION=2025-01
+
+# PokemonTCG API
+POKEMONTCG_API_URL=https://api.pokemontcg.io/v2
+TCG_API_KEY=your_api_key
+
+# Email (for price update reports)
+ZOHO_EMAIL=your-email@example.com
+ZOHO_APP_PASSWORD=your_app_password
+
+# Pricing
+USD_TO_CAD=1.35
+MARKUP=1.10
 ```
 
-### **3. Test Setup**
+### **4. Test Setup**
 
 ```bash
+# Check database
 python inventory/test_inventory_setup.py
+
+# Test price update (dry run)
+python price_update_ultra_conservative.py
 ```
 
 ---
 
-## 📝 Usage
+## 📁 Repository Structure
 
-### **Single Card Entry**
+```
+dumpling-price-automation/
+├── .github/
+│   └── workflows/
+│       ├── daily-price-update.yml        # Automated daily price sync
+│       └── product-upload-manual.yml     # Manual product upload trigger
+│
+├── inventory/                            # ⭐ Inventory management
+│   ├── add_inventory_single.py           # Single card entry
+│   ├── add_inventory_bulk.py             # Bulk CSV upload
+│   ├── csv_validator.py                  # Validation module
+│   ├── test_inventory_setup.py           # Setup test
+│   ├── sample_inventory_upload.csv       # CSV template
+│   └── README.md                         # Full documentation
+│
+├── price_update_ultra_conservative.py    # Price update script
+├── bulk_upload_corrected.py              # Product upload script
+├── requirements.txt                      # Python dependencies
+├── .env.example                          # Environment template
+├── .gitignore                            # Git ignore rules
+└── README.md                             # This file
+```
+
+---
+
+## 🔄 Typical Workflows
+
+### **Workflow 1: New Product Line**
 
 ```bash
+# 1. Upload products (creates cards + variants)
+python bulk_upload_corrected.py
+
+# 2. Add inventory
+python inventory/add_inventory_bulk.py wholesale_order.csv
+
+# Done! Products are live with inventory
+```
+
+---
+
+### **Workflow 2: Customer Buylist**
+
+```bash
+# 1. Add inventory from buylist
+python inventory/add_inventory_bulk.py buylist_customer_john.csv
+
+# If some cards not in DB:
+# 2. Upload missing products
+python bulk_upload_corrected.py
+
+# 3. Re-run buylist upload
+python inventory/add_inventory_bulk.py failed_buylist_customer_john_TIMESTAMP.csv
+
+# Done! Inventory updated, Shopify synced
+```
+
+---
+
+### **Workflow 3: Pack Opening**
+
+```bash
+# Add cards one by one interactively
 python inventory/add_inventory_single.py
-```
 
-**Use for:**
-- Pack openings (1-3 cards)
-- Quick additions
-- Testing
-
-**Time:** 1-2 minutes per card
-
----
-
-### **Bulk CSV Upload**
-
-```bash
-python inventory/add_inventory_bulk.py buylist.csv
-```
-
-**Use for:**
-- Large buylists (20+ cards)
-- Wholesale orders
-- Collection buyouts
-
-**Time:** 1-2 seconds per card
-
----
-
-## 📊 CSV Format
-
-### **Required Columns**
-
-```csv
-card_name,set_code,card_number,condition,quantity,unit_cost,source,notes
-Charizard VMAX,swsh1,142,NM,2,80.00,buylist,Customer John
-Pikachu ex,sv8,245,LP,1,45.00,wholesale,Bulk order
-```
-
-| Column | Description | Example |
-|--------|-------------|---------|
-| `card_name` | Full card name | Charizard VMAX |
-| `set_code` | Set identifier | swsh1, sv6 |
-| `card_number` | Card # in set | 142 |
-| `condition` | NM/LP/MP/HP/DMG | NM |
-| `quantity` | How many | 2 |
-| `unit_cost` | Cost per card (CAD) | 80.00 |
-| `source` | Where from | buylist, wholesale |
-| `notes` | Optional notes | Customer name |
-
-### **Valid Conditions**
-
-- `NM` - Near Mint
-- `LP` - Lightly Played
-- `MP` - Moderately Played
-- `HP` - Heavily Played
-- `DMG` - Damaged
-
-### **Valid Sources**
-
-- `buylist` - Bought from customer
-- `wholesale` - Distributor/supplier
-- `opening` - Pulled from packs
-- `personal` - Personal collection
-- `trade` - Traded
-- `gift` - Gift
-- `return` - Customer return
-- `other` - Other
-
----
-
-## 🔄 Workflow
-
-### **If Cards Already in Database:**
-
-```bash
-# Just add inventory!
-python inventory/add_inventory_bulk.py buylist.csv
-```
-
-### **If Cards NOT in Database:**
-
-```bash
-# 1. Upload inventory (some will fail)
-python inventory/add_inventory_bulk.py buylist.csv
-
-# 2. Check failed rows
-# Opens: failed_buylist_TIMESTAMP.csv
-
-# 3. Upload missing products
-python bulk_upload_corrected.py  # Your product upload script
-
-# 4. Re-run with failed rows (now products exist)
-python inventory/add_inventory_bulk.py failed_buylist_TIMESTAMP.csv
+# Or create CSV of pulls and bulk upload
+python inventory/add_inventory_bulk.py pack_opening_session.csv
 ```
 
 ---
 
-## 📄 Output Files
+### **Workflow 4: Daily Operations**
 
-### **Validation Errors**
-
-**File:** `errors_[filename].csv`
-
-Contains rows with format issues:
-- Invalid set codes
-- Wrong data types
-- Missing required fields
-
-### **Processing Failures**
-
-**File:** `failed_[filename]_[timestamp].csv`
-
-Contains rows that couldn't be processed:
-- Cards not in database
-- Variant not found
-- Database errors
-
-**Both files can be fixed and re-uploaded!**
+```
+3 AM EST: Price update runs automatically (GitHub Actions)
+  ↓
+Email report sent with changes
+  ↓
+Shopify prices updated
+  ↓
+Buylist prices recalculated
+```
 
 ---
 
-## 💡 Business Logic
+## 🎯 Business Logic
 
-### **Weighted Average Cost (WAC)**
+### **Pricing Tiers**
+
+| Market Value | Cash Buylist | Credit Buylist |
+|--------------|--------------|----------------|
+| $0 - $49.99 | 60% | 70% |
+| $50 - $99.99 | 70% | 80% |
+| $100+ | 75% | 85% |
+
+**Condition Modifiers (Singles):**
+- NM: 100% of base
+- LP: 80% of base
+- MP: 60% of base
+- HP: 40% of base
+- DMG: 20% of base
+
+### **Weighted Average Cost**
 
 ```
-Current: 2 cards @ $80 = $160
-Adding: 3 cards @ $90 = $270
+Old: 2 cards @ $80 = $160
+New: 3 cards @ $90 = $270
 ─────────────────────────────
-Total: 5 cards for $430
-New WAC: $430 ÷ 5 = $86.00
-```
-
-**Why WAC?**
-- Industry standard
-- Accurate profit tracking
-- Handles price fluctuations
-- Required for accounting
-
-### **Database Updates**
-
-Each inventory addition updates:
-
-1. **`variants` table**
-   - `inventory_qty` → New total
-   - `cost_basis_avg` → New WAC
-   - `total_units_purchased` → Lifetime total
-
-2. **`inventory_transactions` table**
-   - Complete audit log
-   - Transaction type, quantity, cost
-   - Source and notes
-   - Timestamp
-
-3. **Shopify (via API)**
-   - Inventory level synced
-   - Product shows "In Stock"
-   - Add to Cart enabled
-
----
-
-## 🧪 Testing
-
-### **Test Single Entry:**
-
-```bash
-python inventory/add_inventory_single.py
-
-# Try these:
-1. Add a card (NM condition)
-2. Add same card again (different cost) - verify WAC
-3. Add same card (LP condition) - verify separate tracking
-4. Try invalid quantity (0) - verify error handling
-```
-
-### **Test Bulk Upload:**
-
-```bash
-# Use sample file
-python inventory/add_inventory_bulk.py inventory/sample_inventory_upload.csv
-
-# Check:
-- Validation results
-- Processing speed
-- Failed rows export (if any)
-- Shopify inventory updated
+Total: 5 cards = $430
+WAC: $430 ÷ 5 = $86.00/card
 ```
 
 ---
 
-## 📊 Performance
+## 📊 Database Schema
 
-**Single Entry:**
-- Time: 1-2 minutes per card
-- DB queries: 4 per card
-- Shopify calls: 2 per card
+**Tables:**
+- `cards` - Card metadata
+- `products` - Shopify products
+- `variants` - Condition-based SKUs
+- `inventory_transactions` - Complete audit trail
+- `users` - Customer directory
+- `orders` - Order history
+- `buy_offers` - Buylist submissions
+- `store_credit_ledger` - Credit tracking
 
-**Bulk Upload:**
-- Time: 1-2 seconds per card
-- 50-card upload: ~2 minutes total
-- **95% faster than manual!**
-
----
-
-## 🔍 Troubleshooting
-
-### **"Database connection failed"**
-
-Check `NEON_DB_URL` in `.env`:
-- Must end with `?sslmode=require`
-- Verify credentials are correct
-
-### **"Card not in database"**
-
-1. Run product upload first:
-   ```bash
-   python bulk_upload_corrected.py
-   ```
-2. Then retry inventory upload
-
-### **"Shopify sync failed"**
-
-Check `.env` has:
-- `SHOPIFY_SHOP_URL`
-- `SHOPIFY_ACCESS_TOKEN`
-- `SHOPIFY_LOCATION_ID`
-
-**Note:** Inventory still saves to database even if Shopify sync fails!
-
----
-
-## 📈 Time Savings
-
-### **50-Card Buylist Example:**
-
-**Manual (one-by-one):**
-- 50 cards × 2 min = 100 minutes
-
-**Bulk Upload:**
-- CSV prep: 2 min
-- Upload: 2 min
-- **Total: 4 minutes**
-
-**Savings: 96 minutes (95% faster!)**
-
-### **Annual Impact:**
-
-- 2 buylists/week × 50 cards = 100 cards/week
-- Time saved: 192 min/week
-- **Annual: 165 hours saved!**
+**See:** `dumpling-db-schema.md` for complete schema
 
 ---
 
 ## 🔐 Security
 
-- Database credentials in `.env` (not committed)
-- `.env` listed in `.gitignore`
-- Parameterized SQL queries (SQL injection prevention)
-- API tokens never logged
+- **Never commit `.env`** - Listed in `.gitignore`
+- **GitHub Secrets** - Used for Actions workflows
+- **Parameterized queries** - SQL injection prevention
+- **API tokens** - Never logged or exposed
 
 ---
 
-## 📚 Full Documentation
+## 🧪 Testing
 
-- **ADD_INVENTORY_GUIDE.md** - Complete single entry guide
-- **BULK_UPLOAD_GUIDE.md** - Complete bulk upload guide
-- **QUICKSTART_INVENTORY.md** - Quick reference
-- **INVENTORY_SYSTEM_SUMMARY.md** - System overview
+### **Price Update:**
+```bash
+python price_update_ultra_conservative.py
+# Check: Email report, Shopify prices updated
+```
+
+### **Product Upload:**
+```bash
+python bulk_upload_corrected.py
+# Check: Draft products in Shopify
+```
+
+### **Inventory:**
+```bash
+python inventory/test_inventory_setup.py
+python inventory/add_inventory_single.py
+python inventory/add_inventory_bulk.py inventory/sample_inventory_upload.csv
+```
 
 ---
 
-## 🎯 Next Features (Roadmap)
+## 📈 Performance
 
-**Phase 3: Viewing & Reports**
+**Price Updates:**
+- ~445 cards
+- 2.7 hours (ultra-conservative mode)
+- Runs nightly, no impact on operations
+
+**Product Uploads:**
+- ~100 cards/set
+- 3-5 minutes per set
+- Manual trigger as needed
+
+**Inventory:**
+- Single entry: 1-2 min/card
+- Bulk upload: 1-2 sec/card
+- **50 cards: 100 min → 2 min (95% faster!)**
+
+---
+
+## 🚨 Troubleshooting
+
+### **Database Connection Failed**
+```bash
+# Check NEON_DB_URL in .env
+# Must end with ?sslmode=require
+```
+
+### **Shopify Sync Failed**
+```bash
+# Verify .env has:
+# SHOPIFY_SHOP_URL
+# SHOPIFY_ACCESS_TOKEN
+# SHOPIFY_LOCATION_ID
+```
+
+### **GitHub Actions Failing**
+```bash
+# Check GitHub Secrets:
+# Repository → Settings → Secrets and variables → Actions
+# Verify all required secrets are set
+```
+
+### **Email Reports Not Sending**
+```bash
+# Use Zoho App Password (not account password)
+# Generate at: accounts.zoho.com → Security → App Passwords
+```
+
+---
+
+## 📚 Documentation
+
+**Inventory System:**
+- [inventory/README.md](inventory/README.md) - Complete guide
+- Full workflow documentation
+- CSV format reference
+- Troubleshooting
+
+**Database:**
+- `dumpling-db-schema.md` - Complete schema
+- Table relationships
+- Business logic
+
+**Business Context:**
+- `dumpling-claude-context.md` - Business requirements
+- Pricing strategy
+- Product categories
+
+---
+
+## 🗓️ Automation Schedule
+
+**Daily (GitHub Actions):**
+- 3:00 AM EST - Price updates
+
+**Manual (On Demand):**
+- Product uploads
+- Inventory additions
+
+---
+
+## 🎯 Roadmap
+
+### **Phase 1: Foundation** ✅ **COMPLETE**
+- [x] Price automation
+- [x] Product uploads
+- [x] Inventory management
+
+### **Phase 2: Viewing & Reports** (Next)
 - [ ] View inventory script
 - [ ] Inventory history viewer
 - [ ] Profit reports
+- [ ] Low stock alerts
 
-**Phase 4: Order Integration**
-- [ ] Order sync from Shopify
+### **Phase 3: Order Integration**
+- [ ] Shopify order sync
 - [ ] Auto-reduce inventory
 - [ ] Revenue tracking
 
-**Phase 5: Web Interface**
+### **Phase 4: Buylist System**
+- [ ] Customer buylist form
+- [ ] Quote generation
+- [ ] Approval workflow
+- [ ] Gift card issuance
+
+### **Phase 5: Web Interface**
 - [ ] Dashboard
 - [ ] Team collaboration
+- [ ] Role-based permissions
 - [ ] Mobile responsive
 
 ---
 
-## ✅ System Status
+## 📊 System Stats
 
-**Production Ready:** ✅
+**Scripts:** 8 production scripts
+**Workflows:** 2 GitHub Actions
+**Documentation:** 10+ guide files
+**Lines of Code:** ~2,500 lines
+**Time Saved:** ~165 hours/year
 
-- Single card entry: Tested ✅
-- Bulk CSV upload: Tested ✅
-- WAC calculation: Verified ✅
-- Shopify sync: Working ✅
-- Error handling: Complete ✅
-- Failed rows export: Working ✅
+---
+
+## ✅ Production Status
+
+| Component | Status |
+|-----------|--------|
+| Price Updates | ✅ Production |
+| Product Uploads | ✅ Production |
+| Inventory (Single) | ✅ Production |
+| Inventory (Bulk) | ✅ Production |
+| GitHub Actions | ✅ Production |
+| Email Reports | ✅ Production |
 
 ---
 
 ## 🆘 Support
 
-**Common Issues:**
-1. Wrong CSV format → Check column names match exactly
-2. Cards not in DB → Run product upload first
-3. Shopify not syncing → Verify credentials in `.env`
+**Issues:**
+1. Check documentation first
+2. Review error messages (detailed)
+3. Test with sample files
+4. Check `.env` configuration
 
-**Need Help?**
-- Check documentation files
-- Review error messages (they're detailed!)
-- Test with `sample_inventory_upload.csv`
+**Common Fixes:**
+- Database: Verify connection string
+- Shopify: Check API credentials
+- GitHub: Verify secrets configured
+- Email: Use app password, not account password
 
 ---
 
 ## 📝 Version History
 
-**v2.1** (Current)
-- ✅ Single card entry
-- ✅ Bulk CSV upload
-- ✅ Complete failed rows export
-- ✅ Removed auto-product creation (speed improvement)
+**v2.1** (Current - Nov 2025)
+- ✅ Complete inventory management system
+- ✅ Bulk CSV upload with validation
+- ✅ Failed rows export
+- ✅ Removed slow auto-product creation
 - ✅ WAC calculation
-- ✅ Shopify sync
+- ✅ Full audit trail
+
+**v2.0** (Nov 2025)
+- ✅ Single card inventory entry
+- ✅ Shopify inventory sync
+- ✅ GitHub Actions workflows
+
+**v1.0** (Nov 2025)
+- ✅ Price automation
+- ✅ Product uploads
+- ✅ Database integration
 
 ---
 
 **Built for:** Dumpling Collectibles  
+**Platform:** Shopify + Neon PostgreSQL  
+**Location:** Canada  
 **Last Updated:** November 27, 2025  
 **Status:** Production Ready 🚀
