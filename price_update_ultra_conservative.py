@@ -58,9 +58,9 @@ MIN_CHANGE_PERCENT = 5.0    # AND at least 5%
 BIG_CHANGE_PERCENT = 20.0   # 20% or more
 BIG_CHANGE_DOLLARS = 10.0   # AND at least $10
 
-# Processing Config - Optimized for 1000+ cards (target: 2-3 hours)
-BATCH_SIZE = 50   # Larger batches (was 10)
-API_DELAY = 3     # Shorter wait between batches (was 5)
+# Processing Config - ULTRA FAST (target: 1-1.5 hours)
+BATCH_SIZE = 100   # Maximum batches (was 50)
+API_DELAY = 1      # Minimal wait between batches (was 3)
 
 
 def round_up_to_nearest_50_cents(amount):
@@ -297,7 +297,7 @@ def update_shopify_prices(updated_variants):
             if response.status_code == 200:
                 success_count += 1
             
-            time.sleep(0.5)  # Reduced to 0.5 second (was 1.0) for speed
+            time.sleep(0.3)  # Ultra-fast mode - 0.3 second (was 0.5)
             
         except Exception as e:
             continue
@@ -526,8 +526,8 @@ def main():
                 stats['no_change'] += 1
                 print(f" ⏭️  No change")
             
-            # Shorter delay between each card for faster processing
-            time.sleep(0.75)  # Reduced from 2 seconds
+            # Ultra-fast mode - minimal delay
+            time.sleep(0.5)  # Reduced to 0.5 seconds (was 0.75)
         
         # Delay between batches
         if batch_num < total_batches - 1:
