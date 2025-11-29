@@ -11,6 +11,7 @@ import requests
 import psycopg2
 from psycopg2.extras import Json
 import os
+import sys
 from dotenv import load_dotenv
 import time
 import math
@@ -49,12 +50,29 @@ DEFAULT_MODERN_SETS = [
     'sv3pt5', 'sv4pt5', 'sv6pt5','fut20','swshp'
 ]
 
-# Check if specific sets provided via environment variable (from GitHub Actions input)
-sets_input = os.getenv('SETS_TO_UPLOAD', '').strip()
+# Check for sets input from multiple sources (in order of priority)
+# 1. Command line argument (for local testing): python script.py sv6,sv7
+# 2. GitHub Actions input via environment variable
+# 3. Default list
+
+sets_input = None
+
+# Check command line args first
+if len(sys.argv) > 1:
+    sets_input = sys.argv[1]
+    print(f"📌 Sets from command line: {sets_input}")
+
+# If not in command line, check environment variable
+if not sets_input:
+    sets_input = os.getenv('SETS_TO_UPLOAD', '').strip()
+    if sets_input:
+        print(f"📌 Sets from environment variable: {sets_input}")
+
+# Parse the input
 if sets_input:
     # Split by comma and clean up whitespace
-    MODERN_SETS = [s.strip() for s in sets_input.split(',') if s.strip()]
-    print(f"📌 Using provided sets: {', '.join(MODERN_SETS)}")
+    MODERN_SETS = [s.strip().lower() for s in sets_input.split(',') if s.strip()]
+    print(f"✅ Using provided sets: {', '.join(MODERN_SETS)} ({len(MODERN_SETS)} total)")
 else:
     MODERN_SETS = DEFAULT_MODERN_SETS
     print(f"📌 Using default set list ({len(MODERN_SETS)} sets)")
