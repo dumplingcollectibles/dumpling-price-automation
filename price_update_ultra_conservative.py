@@ -24,6 +24,8 @@ from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 load_dotenv()
 
@@ -58,9 +60,13 @@ MIN_CHANGE_PERCENT = 5.0    # AND at least 5%
 BIG_CHANGE_PERCENT = 20.0   # 20% or more
 BIG_CHANGE_DOLLARS = 10.0   # AND at least $10
 
-# Processing Config - ULTRA FAST (target: 1-1.5 hours)
-BATCH_SIZE = 100   # Maximum batches (was 50)
-API_DELAY = 1      # Minimal wait between batches (was 3)
+# Processing Config - PARALLEL MODE (3 threads)
+BATCH_SIZE = 100   # Maximum batches
+API_DELAY = 1      # Minimal wait between batches
+NUM_THREADS = 3    # Process 3 price buckets simultaneously
+
+# Thread-safe lock for Shopify updates
+shopify_lock = threading.Lock()
 
 
 def round_up_to_nearest_50_cents(amount):
@@ -419,18 +425,9 @@ def send_email_report(report_data):
         return False
 
 
-def main():
-    """Main price update process"""
-    start_time = datetime.now()
-    
-    print("=" * 100)
-    print("💰 PRICE UPDATE SCRIPT - Daily Sync")
-    print("=" * 100)
-    print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Thresholds: 5% change AND $0.50 minimum\n")
-    
-    # Statistics
-    stats = {
+def process_card_group(cards, group_name, stats_dict):
+    """Process a group of cards (for parallel execution)"""
+    local_stats = {
         'total_processed': 0,
         'total_updated': 0,
         'variants_updated': 0,
@@ -442,99 +439,180 @@ def main():
         'big_changes': []
     }
     
+    print(f"\n🧵 Thread '{group_name}' starting with {len(cards)} cards...")
+    
+    for i, card in enumerate(cards, 1):
+        local_stats['total_processed'] += 1
+        
+        # Progress update
+        print(f"   [{group_name}] [{i}/{len(cards)}] {card['name']} ({card['set_code']}-{card['number']})...", end=' ', flush=True)
+        
+        # Get external ID
+        external_ids = card['external_ids']
+        pokemontcg_id = external_ids.get('pokemontcg_io') if external_ids else None
+        
+        if not pokemontcg_id:
+            local_stats['failed'] += 1
+            print(f" ❌ No API ID")
+            continue
+        
+        # Fetch latest price from API
+        market_usd = fetch_api_price(pokemontcg_id)
+        
+        if market_usd is None:
+            local_stats['failed'] += 1
+            print(f" ❌ API failed")
+            continue
+        
+        # Calculate new prices
+        base_market_cad = market_usd * USD_TO_CAD
+        nm_selling_price = round_up_to_nearest_50_cents(base_market_cad * MARKUP)
+        
+        # Update database
+        updated_variants = update_variants_in_database(
+            card['card_id'], 
+            base_market_cad, 
+            nm_selling_price
+        )
+        
+        if updated_variants:
+            local_stats['total_updated'] += 1
+            local_stats['variants_updated'] += len(updated_variants)
+            
+            # Update Shopify (with thread lock for rate limiting)
+            with shopify_lock:
+                shopify_success = update_shopify_prices(updated_variants)
+                local_stats['shopify_synced'] += shopify_success
+            
+            # Track increases/decreases
+            for variant in updated_variants:
+                if variant['change'] > 0:
+                    local_stats['price_increases'] += 1
+                else:
+                    local_stats['price_decreases'] += 1
+                
+                # Check for big changes
+                if is_big_change(variant['old_price'], variant['new_price']):
+                    local_stats['big_changes'].append({
+                        'name': card['name'],
+                        'number': card['number'],
+                        'condition': variant['condition'],
+                        'old_price': variant['old_price'],
+                        'new_price': variant['new_price'],
+                        'change': variant['change'],
+                        'change_percent': variant['change_percent']
+                    })
+            
+            print(f" ✅ Updated {len(updated_variants)} variants")
+        else:
+            local_stats['no_change'] += 1
+            print(f" ⏭️  No change")
+        
+        # Minimal delay
+        time.sleep(0.5)
+    
+    print(f"\n✅ Thread '{group_name}' completed: {local_stats['total_updated']} cards updated")
+    return local_stats
+
+
+def merge_stats(stats_list):
+    """Merge statistics from multiple threads"""
+    merged = {
+        'total_processed': 0,
+        'total_updated': 0,
+        'variants_updated': 0,
+        'shopify_synced': 0,
+        'price_increases': 0,
+        'price_decreases': 0,
+        'failed': 0,
+        'no_change': 0,
+        'big_changes': []
+    }
+    
+    for stats in stats_list:
+        merged['total_processed'] += stats['total_processed']
+        merged['total_updated'] += stats['total_updated']
+        merged['variants_updated'] += stats['variants_updated']
+        merged['shopify_synced'] += stats['shopify_synced']
+        merged['price_increases'] += stats['price_increases']
+        merged['price_decreases'] += stats['price_decreases']
+        merged['failed'] += stats['failed']
+        merged['no_change'] += stats['no_change']
+        merged['big_changes'].extend(stats['big_changes'])
+    
+    return merged
+
+
+def main():
+    """Main price update process - PARALLEL VERSION"""
+    start_time = datetime.now()
+    
+    print("=" * 100)
+    print("💰 PRICE UPDATE SCRIPT - PARALLEL MODE (3 Threads)")
+    print("=" * 100)
+    print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Thresholds: 5% change AND $0.50 minimum")
+    print(f"Threads: {NUM_THREADS} (processing price buckets simultaneously)\n")
+    
     # Step 1: Fetch cards from database
     print("📚 Step 1: Fetching cards from database...")
     cards = fetch_cards_from_database()
     print(f"   ✅ Found {len(cards)} cards to check\n")
     
-    # Step 2: Process in batches
-    print(f"🔄 Step 2: Processing prices (batches of {BATCH_SIZE})...")
+    # Step 2: Split cards into price buckets for parallel processing
+    print("🗂️  Step 2: Splitting cards into price buckets...")
     
-    total_batches = (len(cards) + BATCH_SIZE - 1) // BATCH_SIZE
+    # Get current market prices for bucketing
+    cards_with_prices = []
+    for card in cards:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT market_price 
+            FROM variants v
+            INNER JOIN products p ON p.id = v.product_id
+            WHERE p.card_id = %s AND v.condition = 'NM'
+            LIMIT 1
+        """, (card['card_id'],))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        price = float(result['market_price']) if result and result['market_price'] else 0
+        cards_with_prices.append((card, price))
     
-    for batch_num in range(total_batches):
-        start_idx = batch_num * BATCH_SIZE
-        end_idx = min(start_idx + BATCH_SIZE, len(cards))
-        batch = cards[start_idx:end_idx]
-        
-        print(f"\n   📦 Batch {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx} of {len(cards)})")
-        
-        for i, card in enumerate(batch, 1):
-            stats['total_processed'] += 1
-            card_num = start_idx + i
-            
-            # Clean progress line
-            print(f"\n      [{card_num}/{len(cards)}] {card['name']} ({card['set_code']}-{card['number']})...", end=' ', flush=True)
-            
-            # Get external ID
-            external_ids = card['external_ids']
-            pokemontcg_id = external_ids.get('pokemontcg_io') if external_ids else None
-            
-            if not pokemontcg_id:
-                stats['failed'] += 1
-                print(f" ❌ No API ID")
-                continue
-            
-            # Fetch latest price from API
-            market_usd = fetch_api_price(pokemontcg_id)
-            
-            if market_usd is None:
-                stats['failed'] += 1
-                print(f" ❌ API failed")
-                continue
-            
-            # Calculate new prices
-            base_market_cad = market_usd * USD_TO_CAD
-            nm_selling_price = round_up_to_nearest_50_cents(base_market_cad * MARKUP)
-            
-            # Update database
-            updated_variants = update_variants_in_database(
-                card['card_id'], 
-                base_market_cad, 
-                nm_selling_price
-            )
-            
-            if updated_variants:
-                stats['total_updated'] += 1
-                stats['variants_updated'] += len(updated_variants)
-                
-                # Update Shopify
-                shopify_success = update_shopify_prices(updated_variants)
-                stats['shopify_synced'] += shopify_success
-                
-                # Track increases/decreases
-                for variant in updated_variants:
-                    if variant['change'] > 0:
-                        stats['price_increases'] += 1
-                    else:
-                        stats['price_decreases'] += 1
-                    
-                    # Check for big changes
-                    if is_big_change(variant['old_price'], variant['new_price']):
-                        stats['big_changes'].append({
-                            'name': card['name'],
-                            'number': card['number'],
-                            'condition': variant['condition'],
-                            'old_price': variant['old_price'],
-                            'new_price': variant['new_price'],
-                            'change': variant['change'],
-                            'change_percent': variant['change_percent']
-                        })
-                
-                print(f" ✅ Updated {len(updated_variants)} variants")
-            else:
-                stats['no_change'] += 1
-                print(f" ⏭️  No change")
-            
-            # Ultra-fast mode - minimal delay
-            time.sleep(0.5)  # Reduced to 0.5 seconds (was 0.75)
-        
-        # Delay between batches
-        if batch_num < total_batches - 1:
-            print(f"      ⏳ Waiting {API_DELAY}s before next batch...")
-            time.sleep(API_DELAY)
+    # Split into 3 buckets
+    cards_low = [card for card, price in cards_with_prices if price < 10]
+    cards_mid = [card for card, price in cards_with_prices if 10 <= price <= 50]
+    cards_high = [card for card, price in cards_with_prices if price > 50]
     
-    # Step 3: Generate report
+    print(f"   💵 Low tier (< $10): {len(cards_low)} cards")
+    print(f"   💰 Mid tier ($10-$50): {len(cards_mid)} cards")
+    print(f"   💎 High tier (> $50): {len(cards_high)} cards")
+    print(f"   📊 Total: {len(cards)} cards\n")
+    
+    # Step 3: Process in parallel
+    print(f"⚡ Step 3: Processing {NUM_THREADS} price buckets in parallel...\n")
+    
+    # Create thread pool and submit jobs
+    with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+        future_low = executor.submit(process_card_group, cards_low, "LOW-TIER", None)
+        future_mid = executor.submit(process_card_group, cards_mid, "MID-TIER", None)
+        future_high = executor.submit(process_card_group, cards_high, "HIGH-TIER", None)
+        
+        # Wait for all threads to complete
+        stats_low = future_low.result()
+        stats_mid = future_mid.result()
+        stats_high = future_high.result()
+    
+    # Merge statistics from all threads
+    stats = merge_stats([stats_low, stats_mid, stats_high])
+    
+    print("\n" + "=" * 100)
+    print("⚡ PARALLEL PROCESSING COMPLETE!")
+    print("=" * 100)
+    
+    # Step 4: Generate report
     end_time = datetime.now()
     duration = (end_time - start_time).total_seconds()
     
