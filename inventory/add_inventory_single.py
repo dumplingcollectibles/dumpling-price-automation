@@ -1,26 +1,32 @@
 """
-DUMPLING COLLECTIBLES - Add Inventory (Single Card Entry)
+DUMPLING COLLECTIBLES - Single Inventory Adjustment
 
-Interactive script to add individual cards to inventory.
+Interactively add or remove inventory for a single card.
+
+Use cases:
+- Add inventory: Buylist, wholesale, pack opening
+- Remove inventory: Sold outside system (eBay), damaged card, theft, etc.
+
 Features:
-- Search cards by name
+- Choose add or remove at start
+- Search for card
 - Select condition
-- Enter quantity, cost, source
-- Auto-calculate weighted average cost
-- Update database
-- Sync to Shopify
-- Show profit potential
+- Enter quantity (positive number)
+- Enter reason for adjustment
+- Updates database + Shopify
+- Full audit trail
 
 Usage:
-    python add_inventory_single.py
+    python adjust_inventory_single.py
 """
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 from dotenv import load_dotenv
-import requests
+import sys
 from datetime import datetime
+import requests
 
 load_dotenv()
 
@@ -29,465 +35,391 @@ DATABASE_URL = os.getenv('NEON_DB_URL')
 SHOPIFY_SHOP_URL = os.getenv('SHOPIFY_SHOP_URL')
 SHOPIFY_ACCESS_TOKEN = os.getenv('SHOPIFY_ACCESS_TOKEN')
 SHOPIFY_API_VERSION = os.getenv('SHOPIFY_API_VERSION', '2025-01')
-SHOPIFY_LOCATION_ID = os.getenv('SHOPIFY_LOCATION_ID')
 
 if SHOPIFY_SHOP_URL and not SHOPIFY_SHOP_URL.startswith('https://'):
     SHOPIFY_SHOP_URL = f"https://{SHOPIFY_SHOP_URL}"
-
-# Valid sources
-VALID_SOURCES = {
-    '1': 'buylist',
-    '2': 'wholesale',
-    '3': 'opening',
-    '4': 'personal',
-    '5': 'trade',
-    '6': 'other'
-}
-
-CONDITIONS = {
-    '1': 'NM',
-    '2': 'LP',
-    '3': 'MP',
-    '4': 'HP',
-    '5': 'DMG'
-}
 
 
 def print_header():
     """Print script header"""
     print("\n" + "=" * 70)
-    print("🏪  DUMPLING COLLECTIBLES - Add Inventory")
+    print("📦 INVENTORY ADJUSTMENT - Single Card")
     print("=" * 70)
-    print()
+    print("Add or remove inventory for a single card")
+    print("=" * 70 + "\n")
 
 
-def search_cards(search_term):
+def search_cards(query):
     """Search for cards by name"""
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    try:
-        # Search for cards matching the term
-        cursor.execute("""
-            SELECT 
-                c.id,
-                c.name,
-                c.set_code,
-                c.set_name,
-                c.number,
-                c.img_url
-            FROM cards c
-            WHERE c.name ILIKE %s
-            ORDER BY c.name, c.set_name
-            LIMIT 20
-        """, (f'%{search_term}%',))
-        
-        results = cursor.fetchall()
-        return results
-        
-    finally:
-        cursor.close()
-        conn.close()
+    cursor.execute("""
+        SELECT id as card_id, name, set_code, set_name, number, variant
+        FROM cards
+        WHERE LOWER(name) LIKE LOWER(%s)
+        ORDER BY name, set_code, number
+        LIMIT 20
+    """, (f"%{query}%",))
+    
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    return results
 
 
 def get_variant_info(card_id, condition):
-    """Get variant information for a specific card and condition"""
+    """Get variant details including current inventory"""
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    try:
-        cursor.execute("""
-            SELECT 
-                v.id as variant_id,
-                v.condition,
-                v.sku,
-                v.inventory_qty,
-                v.price_cad,
-                v.cost_basis_avg,
-                v.total_units_purchased,
-                v.shopify_variant_id,
-                p.id as product_id,
-                p.shopify_product_id
-            FROM variants v
-            JOIN products p ON p.id = v.product_id
-            WHERE p.card_id = %s
-            AND v.condition = %s
-        """, (card_id, condition))
-        
-        variant = cursor.fetchone()
-        return variant
-        
-    finally:
-        cursor.close()
-        conn.close()
-
-
-def calculate_new_wac(old_qty, old_wac, new_qty, new_cost):
-    """Calculate weighted average cost"""
-    if old_wac is None or old_qty == 0:
-        # First purchase
-        return new_cost
+    cursor.execute("""
+        SELECT 
+            v.id as variant_id,
+            v.condition,
+            v.inventory_qty,
+            v.price_cad,
+            v.shopify_variant_id,
+            v.cost_basis_avg,
+            v.total_units_purchased,
+            c.name as card_name,
+            c.set_code,
+            c.number
+        FROM variants v
+        INNER JOIN products p ON p.id = v.product_id
+        INNER JOIN cards c ON c.id = p.card_id
+        WHERE p.card_id = %s AND v.condition = %s
+    """, (card_id, condition))
     
-    # Calculate weighted average
-    old_total_value = old_qty * old_wac
-    new_total_value = new_qty * new_cost
-    combined_value = old_total_value + new_total_value
-    combined_qty = old_qty + new_qty
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
     
-    return round(combined_value / combined_qty, 2)
+    return result
 
 
-def update_inventory(variant_id, new_qty, new_wac, total_units):
-    """Update variant inventory in database"""
+def update_inventory(variant_id, new_qty):
+    """Update variant inventory quantity"""
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
     try:
         cursor.execute("""
             UPDATE variants
-            SET 
-                inventory_qty = %s,
-                cost_basis_avg = %s,
-                total_units_purchased = %s,
+            SET inventory_qty = %s,
                 updated_at = NOW()
             WHERE id = %s
-        """, (new_qty, new_wac, total_units, variant_id))
+        """, (new_qty, variant_id))
         
         conn.commit()
-        return True
-        
-    except Exception as e:
-        conn.rollback()
-        print(f"\n❌ Database error: {str(e)}")
-        return False
-        
-    finally:
         cursor.close()
         conn.close()
+        return True
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        print(f"❌ Database error: {str(e)}")
+        return False
 
 
-def log_transaction(variant_id, quantity, unit_cost, source, notes, reference_type='manual', reference_id=None):
+def log_transaction(variant_id, quantity, transaction_type, source, notes):
     """Log inventory transaction"""
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
     try:
         cursor.execute("""
-            INSERT INTO inventory_transactions (
-                variant_id,
-                transaction_type,
-                quantity,
-                unit_cost,
-                reference_type,
-                reference_id,
-                notes
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO inventory_transactions 
+            (variant_id, transaction_type, quantity, unit_cost, reference_type, notes, created_at)
+            VALUES (%s, %s, %s, NULL, %s, %s, NOW())
             RETURNING id
-        """, (variant_id, 'purchase', quantity, unit_cost, reference_type, reference_id, notes))
+        """, (variant_id, transaction_type, quantity, source, notes))
         
         transaction_id = cursor.fetchone()[0]
         conn.commit()
-        return transaction_id
-        
-    except Exception as e:
-        conn.rollback()
-        print(f"\n❌ Transaction log error: {str(e)}")
-        return None
-        
-    finally:
         cursor.close()
         conn.close()
+        return transaction_id
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        print(f"❌ Transaction log error: {str(e)}")
+        return None
 
 
 def sync_to_shopify(shopify_variant_id, new_qty):
-    """Sync inventory quantity to Shopify"""
-    if not SHOPIFY_ACCESS_TOKEN or not SHOPIFY_LOCATION_ID:
-        print("\n⚠️  Shopify credentials missing, skipping sync")
-        return False
-    
-    if not shopify_variant_id:
-        print("\n⚠️  No Shopify variant ID, skipping sync")
+    """Update Shopify inventory"""
+    if not SHOPIFY_ACCESS_TOKEN or not shopify_variant_id:
         return False
     
     try:
-        # Get inventory item ID first
+        # Get location ID
+        location_id = os.getenv('SHOPIFY_LOCATION_ID')
+        if not location_id:
+            print("⚠️  SHOPIFY_LOCATION_ID not set - skipping Shopify sync")
+            return False
+        
+        # Get inventory item ID
+        url = f"{SHOPIFY_SHOP_URL}/admin/api/{SHOPIFY_API_VERSION}/variants/{shopify_variant_id}.json"
         response = requests.get(
-            f"{SHOPIFY_SHOP_URL}/admin/api/{SHOPIFY_API_VERSION}/variants/{shopify_variant_id}.json",
+            url,
             headers={"X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN},
             timeout=10
         )
         
         if response.status_code != 200:
-            print(f"\n⚠️  Failed to get Shopify variant (status {response.status_code})")
             return False
         
         inventory_item_id = response.json()['variant']['inventory_item_id']
         
         # Update inventory level
+        url = f"{SHOPIFY_SHOP_URL}/admin/api/{SHOPIFY_API_VERSION}/inventory_levels/set.json"
         response = requests.post(
-            f"{SHOPIFY_SHOP_URL}/admin/api/{SHOPIFY_API_VERSION}/inventory_levels/set.json",
+            url,
             json={
-                "location_id": int(SHOPIFY_LOCATION_ID),
-                "inventory_item_id": inventory_item_id,
+                "location_id": int(location_id),
+                "inventory_item_id": int(inventory_item_id),
                 "available": new_qty
             },
-            headers={
-                "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
-                "Content-Type": "application/json"
-            },
+            headers={"X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"},
             timeout=10
         )
         
-        if response.status_code in [200, 201]:
-            return True
-        else:
-            print(f"\n⚠️  Shopify sync failed (status {response.status_code})")
-            return False
-            
+        return response.status_code == 200
     except Exception as e:
-        print(f"\n⚠️  Shopify sync error: {str(e)}")
+        print(f"⚠️  Shopify sync failed: {str(e)}")
         return False
-
-
-def add_card_interactive():
-    """Main interactive flow to add a card"""
-    
-    # Step 1: Search for card
-    while True:
-        search_term = input("\n🔍 Enter card name (or 'q' to quit): ").strip()
-        
-        if search_term.lower() == 'q':
-            return False
-        
-        if len(search_term) < 2:
-            print("❌ Please enter at least 2 characters")
-            continue
-        
-        print(f"\n🔍 Searching for '{search_term}'...")
-        
-        results = search_cards(search_term)
-        
-        if not results:
-            print(f"\n❌ No cards found matching '{search_term}'")
-            retry = input("\nTry another search? (y/n): ").strip().lower()
-            if retry != 'y':
-                return False
-            continue
-        
-        # Display results
-        print(f"\n📋 Found {len(results)} match(es):\n")
-        for i, card in enumerate(results, 1):
-            print(f"{i}. {card['name']} - {card['set_name']} (#{card['number']})")
-            print(f"   Set Code: {card['set_code']}")
-        
-        # Select card
-        while True:
-            try:
-                choice = input(f"\nSelect card (1-{len(results)}) or 'b' to search again: ").strip()
-                
-                if choice.lower() == 'b':
-                    break
-                
-                choice_num = int(choice)
-                if 1 <= choice_num <= len(results):
-                    selected_card = results[choice_num - 1]
-                    break
-                else:
-                    print(f"❌ Please enter a number between 1 and {len(results)}")
-            except ValueError:
-                print("❌ Please enter a valid number")
-        
-        if choice.lower() == 'b':
-            continue
-        
-        break
-    
-    # Step 2: Select condition
-    print(f"\n📦 Selected: {selected_card['name']} ({selected_card['set_code']}-{selected_card['number']})")
-    print("\nSelect condition:")
-    print("1. Near Mint (NM)")
-    print("2. Lightly Played (LP)")
-    print("3. Moderately Played (MP)")
-    print("4. Heavily Played (HP)")
-    print("5. Damaged (DMG)")
-    
-    while True:
-        condition_choice = input("\nChoice (1-5): ").strip()
-        if condition_choice in CONDITIONS:
-            condition = CONDITIONS[condition_choice]
-            break
-        print("❌ Invalid choice, please enter 1-5")
-    
-    # Get variant info
-    variant = get_variant_info(selected_card['id'], condition)
-    
-    if not variant:
-        print(f"\n❌ Error: Could not find {condition} variant for this card")
-        return False
-    
-    print(f"\n📊 Current inventory: {variant['inventory_qty']} in stock")
-    if variant['cost_basis_avg']:
-        print(f"   Current cost basis: ${variant['cost_basis_avg']:.2f}")
-    print(f"   Selling price: ${variant['price_cad']:.2f}")
-    
-    # Step 3: Enter quantity
-    while True:
-        try:
-            qty_input = input("\n📦 Quantity to add: ").strip()
-            quantity = int(qty_input)
-            if quantity > 0:
-                break
-            print("❌ Quantity must be greater than 0")
-        except ValueError:
-            print("❌ Please enter a valid number")
-    
-    # Step 4: Enter cost
-    while True:
-        try:
-            cost_input = input(f"\n💰 Cost per card (CAD): $").strip()
-            unit_cost = float(cost_input)
-            if unit_cost > 0:
-                break
-            print("❌ Cost must be greater than 0")
-        except ValueError:
-            print("❌ Please enter a valid number")
-    
-    # Step 5: Select source
-    print("\n📥 Source:")
-    print("1. Buylist (customer)")
-    print("2. Wholesale (distributor)")
-    print("3. Pack Opening")
-    print("4. Personal Collection")
-    print("5. Trade")
-    print("6. Other")
-    
-    while True:
-        source_choice = input("\nChoice (1-6): ").strip()
-        if source_choice in VALID_SOURCES:
-            source = VALID_SOURCES[source_choice]
-            break
-        print("❌ Invalid choice, please enter 1-6")
-    
-    # Step 6: Notes (optional)
-    notes = input("\n📝 Notes (optional, press Enter to skip): ").strip()
-    if not notes:
-        notes = f"Added via single entry - Source: {source}"
-    
-    # Calculate new values
-    old_qty = variant['inventory_qty']
-    old_wac = variant['cost_basis_avg']
-    new_qty = old_qty + quantity
-    new_wac = calculate_new_wac(old_qty, old_wac, quantity, unit_cost)
-    total_units = (variant['total_units_purchased'] or 0) + quantity
-    
-    # Show summary
-    print("\n" + "=" * 70)
-    print("📊 SUMMARY")
-    print("=" * 70)
-    print(f"Card: {selected_card['name']} ({selected_card['set_code']}-{selected_card['number']})")
-    print(f"Condition: {condition}")
-    print(f"Quantity: +{quantity} ({old_qty} → {new_qty})")
-    print(f"Cost: ${unit_cost:.2f} per card")
-    print(f"Total: ${unit_cost * quantity:.2f}")
-    print(f"Source: {source.title()}")
-    if notes:
-        print(f"Notes: {notes}")
-    print()
-    print(f"Cost Basis: ${old_wac:.2f} → ${new_wac:.2f}" if old_wac else f"Cost Basis: ${new_wac:.2f} (new)")
-    print(f"Selling Price: ${float(variant['price_cad']):.2f}")
-    profit_per = float(variant['price_cad']) - new_wac
-    print(f"Potential Profit: ${profit_per:.2f} per card (${profit_per * new_qty:.2f} total)")
-    print("=" * 70)
-    
-    # Confirm
-    confirm = input("\n✅ Confirm and save? (y/n): ").strip().lower()
-    
-    if confirm != 'y':
-        print("\n❌ Cancelled")
-        return False
-    
-    # Execute updates
-    print("\n⏳ Updating inventory...")
-    
-    # Update database
-    if not update_inventory(variant['variant_id'], new_qty, new_wac, total_units):
-        return False
-    
-    print("✅ Database updated")
-    
-    # Log transaction
-    transaction_id = log_transaction(
-        variant['variant_id'],
-        quantity,
-        unit_cost,
-        source,
-        notes
-    )
-    
-    if transaction_id:
-        print(f"✅ Transaction logged (ID: #{transaction_id})")
-    
-    # Sync to Shopify
-    if variant['shopify_variant_id']:
-        print("⏳ Syncing to Shopify...")
-        if sync_to_shopify(variant['shopify_variant_id'], new_qty):
-            print("✅ Shopify synced")
-        else:
-            print("⚠️  Shopify sync failed (inventory updated in database only)")
-    else:
-        print("⚠️  No Shopify variant ID (skipping Shopify sync)")
-    
-    # Success!
-    print("\n" + "=" * 70)
-    print("🎉 SUCCESS!")
-    print("=" * 70)
-    print(f"\nInventory updated:")
-    print(f"• Database: inventory_qty = {new_qty}")
-    print(f"• Cost basis: ${new_wac:.2f}")
-    if variant['shopify_variant_id']:
-        print(f"• Shopify: {new_qty} available for purchase")
-    print()
-    
-    return True
 
 
 def main():
-    """Main program loop"""
+    """Main program"""
     print_header()
     
-    # Check database connection
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.close()
-    except Exception as e:
-        print(f"❌ Database connection failed: {str(e)}")
-        print("\nPlease check your NEON_DB_URL in .env file")
+    # Step 1: Choose action
+    print("What would you like to do?\n")
+    print("[1] Add inventory (buylist, wholesale, pack opening, etc.)")
+    print("[2] Remove inventory (sold outside system, damaged, theft, etc.)")
+    print("[3] Exit")
+    
+    action = input("\nChoice (1-3): ").strip()
+    
+    if action == '3':
+        print("\n👋 Goodbye!")
         return
     
-    print("Welcome! Let's add some inventory.\n")
+    if action not in ['1', '2']:
+        print("\n❌ Invalid choice")
+        return
     
+    is_adding = (action == '1')
+    action_word = "add" if is_adding else "remove"
+    transaction_type = "adjustment" if not is_adding else "purchase"
+    
+    print(f"\n{'📥' if is_adding else '📤'} {action_word.upper()} INVENTORY MODE\n")
+    
+    # Step 2: Search for card
+    search_query = input(f"🔍 Search for card (name): ").strip()
+    
+    if not search_query:
+        print("\n❌ Search query cannot be empty")
+        return
+    
+    results = search_cards(search_query)
+    
+    if not results:
+        print(f"\n❌ No cards found matching '{search_query}'")
+        return
+    
+    # Display results
+    print(f"\n📋 Found {len(results)} card(s):\n")
+    for i, card in enumerate(results, 1):
+        variant_display = f" ({card['variant']})" if card['variant'] else ""
+        print(f"[{i}] {card['name']}{variant_display} - {card['set_name']} ({card['set_code']}) #{card['number']}")
+    
+    # Select card
+    choice = input(f"\nSelect card (1-{len(results)}): ").strip()
+    
+    try:
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(results):
+            raise ValueError()
+        selected_card = results[idx]
+    except:
+        print("\n❌ Invalid selection")
+        return
+    
+    print(f"\n✅ Selected: {selected_card['name']} ({selected_card['set_code']}-{selected_card['number']})")
+    
+    # Step 3: Select condition
+    print("\n📊 Select condition:\n")
+    print("[1] NM (Near Mint)")
+    print("[2] LP (Lightly Played)")
+    print("[3] MP (Moderately Played)")
+    print("[4] HP (Heavily Played)")
+    print("[5] DMG (Damaged)")
+    
+    cond_choice = input("\nChoice (1-5): ").strip()
+    
+    condition_map = {
+        '1': 'NM',
+        '2': 'LP',
+        '3': 'MP',
+        '4': 'HP',
+        '5': 'DMG'
+    }
+    
+    if cond_choice not in condition_map:
+        print("\n❌ Invalid condition")
+        return
+    
+    condition = condition_map[cond_choice]
+    
+    # Get variant info
+    variant = get_variant_info(selected_card['card_id'], condition)
+    
+    if not variant:
+        print(f"\n❌ Variant not found for {condition} condition")
+        print("💡 This card may not have been uploaded to Shopify yet")
+        return
+    
+    # Display current inventory
+    print(f"\n📦 Current inventory: {variant['inventory_qty']} units")
+    print(f"💰 Current price: ${float(variant['price_cad']):.2f} CAD")
+    
+    # Step 4: Get quantity
     while True:
-        success = add_card_interactive()
+        qty_input = input(f"\n{'➕' if is_adding else '➖'} Quantity to {action_word}: ").strip()
         
-        if not success:
+        try:
+            quantity = int(qty_input)
+            if quantity <= 0:
+                print("❌ Quantity must be positive")
+                continue
+            
+            # Calculate new inventory
+            if is_adding:
+                new_qty = variant['inventory_qty'] + quantity
+            else:
+                new_qty = variant['inventory_qty'] - quantity
+                
+                if new_qty < 0:
+                    print(f"❌ Cannot remove {quantity} units - only {variant['inventory_qty']} available")
+                    print(f"💡 Maximum you can remove: {variant['inventory_qty']}")
+                    continue
+            
             break
-        
-        # Ask if want to add another
-        print("\nNext action:")
-        print("1. Add another card")
-        print("2. Exit")
-        
-        choice = input("\nChoice (1-2): ").strip()
-        
-        if choice != '1':
-            break
+        except ValueError:
+            print("❌ Please enter a valid number")
     
+    # Step 5: Get reason
+    if is_adding:
+        print("\n📝 Source/reason:")
+        print("[1] buylist")
+        print("[2] wholesale")
+        print("[3] opening")
+        print("[4] trade")
+        print("[5] personal")
+        print("[6] other")
+        
+        source_choice = input("\nChoice (1-6): ").strip()
+        source_map = {
+            '1': 'buylist',
+            '2': 'wholesale',
+            '3': 'opening',
+            '4': 'trade',
+            '5': 'personal',
+            '6': 'other'
+        }
+        source = source_map.get(source_choice, 'other')
+    else:
+        print("\n📝 Reason for removal:")
+        print("[1] sold_ebay")
+        print("[2] sold_other")
+        print("[3] damaged")
+        print("[4] theft")
+        print("[5] lost")
+        print("[6] returned")
+        print("[7] other")
+        
+        reason_choice = input("\nChoice (1-7): ").strip()
+        reason_map = {
+            '1': 'sold_ebay',
+            '2': 'sold_other',
+            '3': 'damaged',
+            '4': 'theft',
+            '5': 'lost',
+            '6': 'returned',
+            '7': 'other'
+        }
+        source = reason_map.get(reason_choice, 'other')
+    
+    notes = input("Additional notes (optional): ").strip()
+    
+    # Confirmation
     print("\n" + "=" * 70)
-    print("👋 Thanks for using Dumpling Collectibles Inventory Manager!")
+    print("📋 SUMMARY")
     print("=" * 70)
-    print()
+    print(f"Card: {variant['card_name']} ({variant['set_code']}-{variant['number']})")
+    print(f"Condition: {condition}")
+    print(f"Action: {action_word.upper()}")
+    print(f"Quantity: {quantity}")
+    print(f"Current inventory: {variant['inventory_qty']}")
+    print(f"New inventory: {new_qty} {'📈' if is_adding else '📉'}")
+    print(f"Reason: {source}")
+    if notes:
+        print(f"Notes: {notes}")
+    print("=" * 70)
+    
+    confirm = input("\n✅ Confirm? (y/n): ").strip().lower()
+    
+    if confirm != 'y':
+        print("\n❌ Cancelled")
+        return
+    
+    # Execute adjustment
+    print(f"\n⏳ {action_word.title()}ing inventory...")
+    
+    # Update database
+    if not update_inventory(variant['variant_id'], new_qty):
+        print("\n❌ Failed to update database")
+        return
+    
+    # Log transaction
+    quantity_to_log = quantity if is_adding else -quantity
+    transaction_id = log_transaction(
+        variant['variant_id'],
+        quantity_to_log,
+        transaction_type,
+        source,
+        notes or f"Manual {action_word} - {source}"
+    )
+    
+    # Sync to Shopify
+    shopify_success = False
+    if variant['shopify_variant_id']:
+        print("⏳ Syncing to Shopify...")
+        shopify_success = sync_to_shopify(variant['shopify_variant_id'], new_qty)
+    
+    # Success message
+    print("\n" + "=" * 70)
+    print(f"🎉 SUCCESS!")
+    print("=" * 70)
+    print(f"\nInventory {'added' if is_adding else 'removed'}:")
+    print(f"• Database: inventory_qty = {new_qty}")
+    if variant['shopify_variant_id']:
+        if shopify_success:
+            print(f"• Shopify: {new_qty} available")
+        else:
+            print(f"• Shopify: ⚠️  Sync failed (manual update needed)")
+    
+    if transaction_id:
+        print(f"\nTransaction ID: #{transaction_id}")
+    
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":
     main()
-
