@@ -168,6 +168,38 @@ def process_order(order_data):
         else:
             payment_method = 'other'
         
+        # DEBUG: Log entire order structure to find gift cards
+        logger.info(f"=== DEBUG ORDER DATA ===")
+        logger.info(f"Payment gateways: {payment_gateway_names}")
+        logger.info(f"Financial status: {order_data.get('financial_status')}")
+        logger.info(f"Total price: {total_price}")
+        logger.info(f"Current total price: {order_data.get('current_total_price')}")
+        logger.info(f"Total discounts: {order_data.get('total_discounts')}")
+        logger.info(f"Transactions: {len(order_data.get('transactions', []))}")
+        
+        # Log transaction details
+        for idx, txn in enumerate(order_data.get('transactions', [])):
+            logger.info(f"Transaction {idx}: gateway={txn.get('gateway')}, kind={txn.get('kind')}, "
+                       f"status={txn.get('status')}, amount={txn.get('amount')}")
+        
+        # Log refunds if any
+        refunds = order_data.get('refunds', [])
+        logger.info(f"Refunds: {len(refunds)}")
+        
+        # Log discount codes
+        discount_codes = order_data.get('discount_codes', [])
+        logger.info(f"Discount codes: {discount_codes}")
+        
+        # Check for gift_cards array
+        order_gift_cards = order_data.get('gift_cards', [])
+        logger.info(f"Gift cards array: {order_gift_cards}")
+        
+        # Check current_total_discounts_set
+        discount_set = order_data.get('current_total_discounts_set', {})
+        logger.info(f"Discount set: {discount_set}")
+        
+        logger.info(f"=== END DEBUG ===")
+        
         # Gift card info - properly extract from Shopify order data
         gift_cards = []
         gift_card_total = 0.0
