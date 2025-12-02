@@ -168,29 +168,39 @@ def process_order(order_data):
         else:
             payment_method = 'other'
         
-        # Gift card info
+        # Gift card info - check for gift cards used
         gift_cards = []
         gift_card_total = 0.0
-        for adjustment in order_data.get('refunds', []):
-            for transaction in adjustment.get('transactions', []):
-                if transaction.get('kind') == 'gift_card':
+        
+        # Check in payment gateway names
+        if 'gift_card' in [g.lower() for g in payment_gateway_names]:
+            # Look for gift card transactions in order
+            for transaction in order_data.get('transactions', []):
+                if transaction.get('gateway') == 'gift_card':
                     gift_cards.append(transaction.get('authorization'))
-                    gift_card_total += float(transaction.get('amount', 0))
+                    gift_card_total += abs(float(transaction.get('amount', 0)))
+        
+        # Calculate cash vs credit amounts
+        order_amount_credit = gift_card_total
+        order_amount_cash = total_price - gift_card_total
         
         # Create order record
         cursor.execute("""
             INSERT INTO orders (
                 shopify_order_id, user_id, order_date, order_total,
+                order_amount_cash, order_amount_credit,
                 net_order_amount, tax, shipping, payment_method,
                 gift_card_codes, gift_card_amount_used, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             shopify_order_id,
             user_id,
             datetime.now(),
             total_price,
+            order_amount_cash,
+            order_amount_credit,
             subtotal,
             total_tax,
             shipping,
