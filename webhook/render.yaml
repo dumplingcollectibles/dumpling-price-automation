@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: dumpling-webhook-server
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn webhook_server:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        sync: false
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
