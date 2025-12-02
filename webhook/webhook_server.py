@@ -168,21 +168,61 @@ def process_order(order_data):
         else:
             payment_method = 'other'
         
-        # Gift card info - check for gift cards used
+        # Gift card info - properly extract from Shopify order data
         gift_cards = []
         gift_card_total = 0.0
         
-        # Check in payment gateway names
-        if 'gift_card' in [g.lower() for g in payment_gateway_names]:
-            # Look for gift card transactions in order
-            for transaction in order_data.get('transactions', []):
-                if transaction.get('gateway') == 'gift_card':
-                    gift_cards.append(transaction.get('authorization'))
-                    gift_card_total += abs(float(transaction.get('amount', 0)))
+        # Method 1: Check for gift_card in payment_gateway_names
+        has_gift_card = 'gift_card' in [str(g).lower() for g in payment_gateway_names]
+        
+        # Method 2: Check transactions for gift card payments
+        transactions = order_data.get('transactions', [])
+        for transaction in transactions:
+            gateway = str(transaction.get('gateway', '')).lower()
+            kind = str(transaction.get('kind', '')).lower()
+            status = str(transaction.get('status', '')).lower()
+            
+            # Gift card transactions have gateway='gift_card' or kind='gift_card'
+            if 'gift_card' in gateway or kind == 'sale':
+                if gateway == 'gift_card' or transaction.get('payment_details', {}).get('gift_card_id'):
+                    amount = abs(float(transaction.get('amount', 0)))
+                    if amount > 0 and status == 'success':
+                        auth_code = transaction.get('authorization') or transaction.get('receipt', {}).get('gift_card_id')
+                        if auth_code:
+                            gift_cards.append(str(auth_code))
+                        gift_card_total += amount
+        
+        # Method 3: Check current_total_discounts_set for gift card discounts
+        # Sometimes Shopify lists gift cards as discounts
+        if gift_card_total == 0:
+            # Check order-level gift card data
+            order_gift_cards = order_data.get('gift_cards', [])
+            for gc in order_gift_cards:
+                amount = abs(float(gc.get('amount', 0)))
+                code = gc.get('code') or gc.get('last_characters')
+                if amount > 0:
+                    gift_card_total += amount
+                    if code:
+                        gift_cards.append(str(code))
+        
+        # Method 4: Check financial_status and total_discounts
+        # If still no gift card found but payment_gateway_names includes it
+        if gift_card_total == 0 and has_gift_card:
+            # Calculate from price differences
+            current_total = float(order_data.get('current_total_price', total_price))
+            if current_total < total_price:
+                potential_gift_card = total_price - current_total
+                if potential_gift_card > 0:
+                    gift_card_total = potential_gift_card
+                    logger.info(f"Inferred gift card amount from price difference: ${gift_card_total:.2f}")
         
         # Calculate cash vs credit amounts
         order_amount_credit = gift_card_total
         order_amount_cash = total_price - gift_card_total
+        
+        logger.info(f"Payment breakdown: Total=${total_price:.2f}, Cash=${order_amount_cash:.2f}, Credit=${order_amount_credit:.2f}")
+        if gift_cards:
+            logger.info(f"Gift cards used: {gift_cards}")
         
         # Create order record
         cursor.execute("""
