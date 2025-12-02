@@ -200,53 +200,73 @@ def process_order(order_data):
         
         logger.info(f"=== END DEBUG ===")
         
-        # Gift card info - properly extract from Shopify order data
+        # Gift card info - fetch from Shopify API since webhook doesn't include transactions
         gift_cards = []
         gift_card_total = 0.0
         
-        # Method 1: Check for gift_card in payment_gateway_names
+        # If gift_card in payment gateways, fetch full order from Shopify API
         has_gift_card = 'gift_card' in [str(g).lower() for g in payment_gateway_names]
         
-        # Method 2: Check transactions for gift card payments
-        transactions = order_data.get('transactions', [])
-        for transaction in transactions:
-            gateway = str(transaction.get('gateway', '')).lower()
-            kind = str(transaction.get('kind', '')).lower()
-            status = str(transaction.get('status', '')).lower()
-            
-            # Gift card transactions have gateway='gift_card' or kind='gift_card'
-            if 'gift_card' in gateway or kind == 'sale':
-                if gateway == 'gift_card' or transaction.get('payment_details', {}).get('gift_card_id'):
-                    amount = abs(float(transaction.get('amount', 0)))
-                    if amount > 0 and status == 'success':
-                        auth_code = transaction.get('authorization') or transaction.get('receipt', {}).get('gift_card_id')
-                        if auth_code:
-                            gift_cards.append(str(auth_code))
-                        gift_card_total += amount
+        if has_gift_card:
+            logger.info("Gift card detected - fetching full order from Shopify API...")
+            try:
+                import requests
+                shopify_order_id = order_data.get('id')
+                shopify_url = f"{os.getenv('SHOPIFY_SHOP_URL')}/admin/api/{os.getenv('SHOPIFY_API_VERSION', '2025-01')}/orders/{shopify_order_id}.json"
+                
+                response = requests.get(
+                    shopify_url,
+                    headers={
+                        'X-Shopify-Access-Token': os.getenv('SHOPIFY_ACCESS_TOKEN'),
+                        'Content-Type': 'application/json'
+                    },
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    full_order = response.json()['order']
+                    
+                    # Check transactions in full order
+                    transactions = full_order.get('transactions', [])
+                    logger.info(f"API returned {len(transactions)} transactions")
+                    
+                    for txn in transactions:
+                        gateway = str(txn.get('gateway', '')).lower()
+                        kind = str(txn.get('kind', '')).lower()
+                        status = str(txn.get('status', '')).lower()
+                        amount = abs(float(txn.get('amount', 0)))
+                        
+                        logger.info(f"Transaction: gateway={gateway}, kind={kind}, status={status}, amount={amount}")
+                        
+                        if gateway == 'gift_card' and kind == 'sale' and status == 'success':
+                            gift_card_total += amount
+                            auth = txn.get('authorization') or txn.get('receipt', {}).get('gift_card_last_characters')
+                            if auth:
+                                gift_cards.append(str(auth))
+                            logger.info(f"Found gift card transaction: ${amount}")
+                    
+                    # Also check gift_cards array in full order
+                    order_gift_cards = full_order.get('gift_cards', [])
+                    if order_gift_cards:
+                        logger.info(f"Gift cards array: {order_gift_cards}")
+                        for gc in order_gift_cards:
+                            gc_amount = abs(float(gc.get('amount', 0)))
+                            if gc_amount > 0:
+                                gift_card_total = max(gift_card_total, gc_amount)  # Use max to avoid double-counting
+                                code = gc.get('last_characters') or gc.get('masked_code')
+                                if code and code not in gift_cards:
+                                    gift_cards.append(str(code))
+                
+                else:
+                    logger.warning(f"Failed to fetch full order from Shopify: {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Error fetching full order from Shopify: {e}")
         
-        # Method 3: Check current_total_discounts_set for gift card discounts
-        # Sometimes Shopify lists gift cards as discounts
-        if gift_card_total == 0:
-            # Check order-level gift card data
-            order_gift_cards = order_data.get('gift_cards', [])
-            for gc in order_gift_cards:
-                amount = abs(float(gc.get('amount', 0)))
-                code = gc.get('code') or gc.get('last_characters')
-                if amount > 0:
-                    gift_card_total += amount
-                    if code:
-                        gift_cards.append(str(code))
-        
-        # Method 4: Check financial_status and total_discounts
-        # If still no gift card found but payment_gateway_names includes it
+        # Fallback: If still no gift card found but payment_gateway includes gift_card
+        # This shouldn't happen, but log if it does
         if gift_card_total == 0 and has_gift_card:
-            # Calculate from price differences
-            current_total = float(order_data.get('current_total_price', total_price))
-            if current_total < total_price:
-                potential_gift_card = total_price - current_total
-                if potential_gift_card > 0:
-                    gift_card_total = potential_gift_card
-                    logger.info(f"Inferred gift card amount from price difference: ${gift_card_total:.2f}")
+            logger.warning("Gift card in payment gateways but amount is $0 - may need manual verification")
         
         # Calculate cash vs credit amounts
         order_amount_credit = gift_card_total
