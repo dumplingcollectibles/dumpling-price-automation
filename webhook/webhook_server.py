@@ -278,6 +278,48 @@ def process_order(order_data):
             profit = (unit_price - cost_basis) * quantity
             logger.info(f"Profit on sale: ${profit:.2f} (sold ${unit_price}, cost ${cost_basis}, qty {quantity})")
         
+        # Update store credit ledger if gift card was used
+        if gift_card_total > 0 and gift_cards:
+            # Get current balance
+            cursor.execute("""
+                SELECT balance_after 
+                FROM store_credit_ledger 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC, id DESC 
+                LIMIT 1
+            """, (user_id,))
+            
+            balance_result = cursor.fetchone()
+            current_balance = float(balance_result['balance_after']) if balance_result else 0.0
+            new_balance = current_balance - gift_card_total
+            
+            # Record gift card usage in ledger
+            cursor.execute("""
+                INSERT INTO store_credit_ledger (
+                    user_id,
+                    amount,
+                    transaction_type,
+                    reference_type,
+                    reference_id,
+                    balance_after,
+                    shopify_gift_card_code,
+                    notes,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            """, (
+                user_id,
+                -gift_card_total,  # Negative for usage
+                'order_payment',
+                'order',
+                order_id,
+                new_balance,
+                gift_cards[0] if gift_cards else None,  # First gift card code
+                f"Store credit used on order #{order_number}"
+            ))
+            
+            logger.info(f"Updated store credit ledger: ${current_balance:.2f} → ${new_balance:.2f}")
+        
         # Commit all changes
         conn.commit()
         logger.info(f"✅ Successfully processed order {order_number}")
