@@ -562,24 +562,33 @@ def main():
     # Step 2: Split cards into price buckets for parallel processing
     print("🗂️  Step 2: Splitting cards into price buckets...")
     
-    # Get current market prices for bucketing
-    cards_with_prices = []
-    for card in cards:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("""
-            SELECT market_price 
-            FROM variants v
-            INNER JOIN products p ON p.id = v.product_id
-            WHERE p.card_id = %s AND v.condition = 'NM'
-            LIMIT 1
-        """, (card['card_id'],))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        price = float(result['market_price']) if result and result['market_price'] else 0
-        cards_with_prices.append((card, price))
+    # Get current market prices for ALL cards at once (ONE query instead of 1,260!)
+    conn = psycopg2.connect(DATABASE_URL)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Extract all card_ids
+    card_ids = [card['card_id'] for card in cards]
+    
+    # ONE query to get all prices
+    cursor.execute("""
+        SELECT 
+            p.card_id,
+            v.market_price
+        FROM variants v
+        INNER JOIN products p ON p.id = v.product_id
+        WHERE p.card_id = ANY(%s) AND v.condition = 'NM'
+    """, (card_ids,))
+    
+    # Build price lookup dictionary
+    price_lookup = {}
+    for row in cursor.fetchall():
+        price_lookup[row['card_id']] = float(row['market_price']) if row['market_price'] else 0
+    
+    cursor.close()
+    conn.close()
+    
+    # Bucket cards based on prices (in memory - very fast!)
+    cards_with_prices = [(card, price_lookup.get(card['card_id'], 0)) for card in cards]
     
     # Split into 3 buckets
     cards_low = [card for card, price in cards_with_prices if price < 10]
