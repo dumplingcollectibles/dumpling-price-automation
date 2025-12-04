@@ -1,0 +1,73 @@
+name: Issue Store Credit
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_email:
+        description: 'Customer Email'
+        required: true
+        type: string
+      amount:
+        description: 'Amount (CAD)'
+        required: true
+        type: string
+      transaction_type:
+        description: 'Transaction Type'
+        required: true
+        type: choice
+        options:
+          - buylist_payout
+          - refund
+          - adjustment
+          - promotion
+        default: 'buylist_payout'
+      buylist_id:
+        description: 'Buylist ID (optional - leave blank if not applicable)'
+        required: false
+        type: string
+      notes:
+        description: 'Notes (optional)'
+        required: false
+        type: string
+
+jobs:
+  issue-credit:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests psycopg2-binary python-dotenv
+      
+      - name: Issue Store Credit
+        env:
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+          SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_API_VERSION: ${{ secrets.SHOPIFY_API_VERSION }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          FROM_NAME: ${{ secrets.FROM_NAME }}
+          STORE_NAME: ${{ secrets.STORE_NAME }}
+          STORE_URL: ${{ secrets.STORE_URL }}
+        run: |
+          python issue_store_credit_automated.py \
+            --email "${{ github.event.inputs.customer_email }}" \
+            --amount "${{ github.event.inputs.amount }}" \
+            --type "${{ github.event.inputs.transaction_type }}" \
+            --buylist-id "${{ github.event.inputs.buylist_id }}" \
+            --notes "${{ github.event.inputs.notes }}"
+      
+      - name: Show Results
+        run: |
+          echo "✅ Store credit issued successfully!"
+          echo "Customer: ${{ github.event.inputs.customer_email }}"
+          echo "Amount: \$${{ github.event.inputs.amount }}"
