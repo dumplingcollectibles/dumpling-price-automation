@@ -1,0 +1,70 @@
+name: Adjust Store Credit
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_email:
+        description: 'Customer Email'
+        required: true
+        type: string
+      amount:
+        description: 'Amount (use negative for removal, e.g., -10.00)'
+        required: true
+        type: string
+      reason:
+        description: 'Reason for adjustment'
+        required: true
+        type: string
+      create_gift_card:
+        description: 'Create Shopify gift card? (only for additions)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  adjust-credit:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests psycopg2-binary python-dotenv
+      
+      - name: Adjust Store Credit
+        env:
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+          SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_API_VERSION: ${{ secrets.SHOPIFY_API_VERSION }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          FROM_NAME: ${{ secrets.FROM_NAME }}
+          STORE_NAME: ${{ secrets.STORE_NAME }}
+          STORE_URL: ${{ secrets.STORE_URL }}
+        run: |
+          if [ "${{ github.event.inputs.create_gift_card }}" = "true" ]; then
+            python adjust_store_credit.py \
+              --email "${{ github.event.inputs.customer_email }}" \
+              --amount "${{ github.event.inputs.amount }}" \
+              --reason "${{ github.event.inputs.reason }}" \
+              --create-gift-card
+          else
+            python adjust_store_credit.py \
+              --email "${{ github.event.inputs.customer_email }}" \
+              --amount "${{ github.event.inputs.amount }}" \
+              --reason "${{ github.event.inputs.reason }}"
+          fi
+      
+      - name: Show Results
+        run: |
+          echo "✅ Store credit adjusted successfully!"
+          echo "Customer: ${{ github.event.inputs.customer_email }}"
+          echo "Amount: \$${{ github.event.inputs.amount }}"
