@@ -1,7 +1,7 @@
 // Buylist JavaScript - All the Interactive Magic! ✨
 
 // Configuration
-const API_URL = 'http://localhost:5001/api';
+const API_URL = 'const API_URL = 'https://dumpling-buylist-api.onrender.com';
 
 // State Management
 let cart = [];
