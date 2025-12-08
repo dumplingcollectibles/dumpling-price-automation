@@ -1,7 +1,7 @@
 // Buylist JavaScript - All the Interactive Magic! ✨
 
 // Configuration
-const API_URL = 'const API_URL = 'https://dumpling-buylist-api.onrender.com';
+const API_URL = 'https://dumpling-buylist-api.onrender.com';
 
 // State Management
 let cart = [];
@@ -45,7 +45,7 @@ async function searchCards() {
     resultsDiv.innerHTML = '<p class="loading">Searching...</p>';
     
     try {
-        const response = await fetch(`${API_URL}/cards/search?q=${encodeURIComponent(query)}`);
+        const response = await fetch(`${API_URL}/api/cards/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
         
         if (data.success && data.results.length > 0) {
@@ -283,7 +283,7 @@ async function submitBuylist() {
     document.getElementById('loadingSpinner').style.display = 'flex';
     
     try {
-        const response = await fetch(`${API_URL}/buylist/submit`, {
+        const response = await fetch(`${API_URL}/api/buylist/submit`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
