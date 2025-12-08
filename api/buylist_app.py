@@ -14,8 +14,8 @@ Usage:
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -41,7 +41,7 @@ STORE_NAME = os.getenv('STORE_NAME', 'Dumpling Collectibles')
 
 def get_db_connection():
     """Create database connection"""
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 @app.route('/api/health', methods=['GET'])
@@ -91,7 +91,7 @@ def search_cards():
     
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor = conn.cursor(row_factory=dict_row)
         
         # Search cards with buylist prices
         # Only include cards where we're actively buying (buy_cash > 0)
@@ -237,7 +237,7 @@ def submit_buylist():
     
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor = conn.cursor(row_factory=dict_row)
         
         # Find or create user
         cursor.execute("SELECT id FROM users WHERE email = %s", (customer['email'],))
