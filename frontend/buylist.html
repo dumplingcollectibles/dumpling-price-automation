@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sell Your Cards - Dumpling Collectibles</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🎴 Dumpling Collectibles</h1>
+            <p class="tagline">Sell Your Pokémon Cards - Get Instant Quotes!</p>
+        </header>
+
+        <!-- Search Section -->
+        <section class="search-section">
+            <h2>Search for Cards to Sell</h2>
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="Type a card name (e.g., Charizard, Pikachu)..."
+                    autocomplete="off"
+                >
+                <button id="searchButton">🔍 Search</button>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+        </section>
+
+        <!-- Buylist Cart -->
+        <section class="cart-section">
+            <h2>Your Buylist Cart (<span id="cartCount">0</span> cards)</h2>
+            <div id="cartItems" class="cart-items"></div>
+            
+            <div class="cart-summary" id="cartSummary" style="display: none;">
+                <div class="payout-toggle">
+                    <label>
+                        <input type="radio" name="payout" value="cash" checked>
+                        <span>💵 Cash</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="payout" value="credit">
+                        <span>🎁 Store Credit (+10-15% more!)</span>
+                    </label>
+                </div>
+                
+                <div class="total-display">
+                    <div class="total-row">
+                        <span>Total:</span>
+                        <span class="total-amount" id="totalAmount">$0.00</span>
+                    </div>
+                </div>
+
+                <div class="customer-form">
+                    <h3>Your Information</h3>
+                    <input type="email" id="customerEmail" placeholder="Your email" required>
+                    <input type="text" id="customerName" placeholder="Your name (optional)">
+                    <button id="submitButton" class="submit-button">Get Quote →</button>
+                </div>
+            </div>
+
+            <div class="empty-cart" id="emptyCart">
+                <p>🛒 Your cart is empty</p>
+                <p>Search for cards above to get started!</p>
+            </div>
+        </section>
+
+        <!-- Success Message -->
+        <div id="successMessage" class="success-message" style="display: none;">
+            <div class="success-content">
+                <h2>✅ Quote Submitted!</h2>
+                <p id="successText"></p>
+                <button onclick="location.reload()">Submit Another Buylist</button>
+            </div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+            <div class="spinner"></div>
+            <p>Processing...</p>
+        </div>
+    </div>
+
+    <script src="buylist.js"></script>
+</body>
+</html>
