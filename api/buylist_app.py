@@ -378,6 +378,28 @@ def submit_buylist():
             logger.error(f"Email error: {email_error}")
             # Don't fail the whole request if email fails
         
+        # Send internal notification to store
+        try:
+            from email_helper import send_internal_buylist_notification
+            
+            internal_sent = send_internal_buylist_notification(
+                buy_offer_id=buy_offer_id,
+                customer_email=customer['email'],
+                customer_name=customer.get('name'),
+                quoted_total=total_quote,
+                payout_method=payout_method,
+                items=valid_items,
+                item_count=total_item_count
+            )
+            
+            if internal_sent:
+                logger.info(f"Internal notification sent to buylist@")
+            else:
+                logger.warning(f"Failed to send internal notification")
+        except Exception as notification_error:
+            logger.error(f"Internal notification error: {notification_error}")
+            # Don't fail the whole request if notification fails
+        
         return jsonify({
             'success': True,
             'buy_offer_id': buy_offer_id,
