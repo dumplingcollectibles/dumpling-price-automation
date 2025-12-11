@@ -47,7 +47,7 @@ SHOPIFY_SHOP_URL = os.getenv('SHOPIFY_SHOP_URL')
 
 def get_db_connection():
     """Create database connection"""
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 def send_customer_confirmation_email(customer_email, customer_name, buy_offer_id, quoted_total, payout_method, items, expires_at):
