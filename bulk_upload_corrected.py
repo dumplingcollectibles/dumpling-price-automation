@@ -1,13 +1,11 @@
 """
-CORRECTED Bulk Upload Script - Standalone Version (No Dependencies)
+SCHEMA-CORRECTED Bulk Upload Script
 
 FIXES:
-- Removed csv_validator dependency (not needed for this script)
-- Sets with 0 eligible cards are marked as FAILED (allows retry)
-- Progress tracking fixed to remove failed sets when they succeed
-- Works in GitHub Actions without external modules
-
-This script does NOT use CSV validation - it directly fetches cards from Pokemon TCG API
+- Uses ACTUAL database schema from your cards table
+- Columns: name, set_name, set_code, number, variant, rarity, img_url, tcgplayer_id
+- No card_id column (uses set_code + number for uniqueness)
+- No api_data, set_id, supertype, subtypes columns
 """
 
 import requests
@@ -27,7 +25,7 @@ DATABASE_URL = os.getenv('NEON_DB_URL')
 POKEMONTCG_API_URL = os.getenv('POKEMONTCG_API_URL', 'https://api.pokemontcg.io/v2')
 TCG_API_KEY = os.getenv('TCG_API_KEY')
 
-# Shopify Config
+# Shopify Config (not used in this script but kept for compatibility)
 SHOPIFY_SHOP_URL = os.getenv('SHOPIFY_SHOP_URL')
 SHOPIFY_ACCESS_TOKEN = os.getenv('SHOPIFY_ACCESS_TOKEN')
 SHOPIFY_API_VERSION = os.getenv('SHOPIFY_API_VERSION', '2025-01')
@@ -44,7 +42,7 @@ MIN_PRICE_CAD = float(os.getenv('MIN_PRICE_CAD', '25.00'))
 # Progress tracking file
 PROGRESS_FILE = "bulk_upload_progress.json"
 
-# Modern sets - Default list (all modern sets 2020-2025)
+# Modern sets - Default list
 DEFAULT_MODERN_SETS = [
     'swsh8', 'swsh9', 'swsh10', 'swsh12','cel25c','swsh12tg',
     'swsh12pt5', 'pgo',
@@ -52,17 +50,16 @@ DEFAULT_MODERN_SETS = [
     'sv3pt5', 'sv4pt5', 'sv6pt5','fut20','swshp'
 ]
 
-# Check if specific sets provided via environment variable (from GitHub Actions input)
+# Check if specific sets provided via environment variable
 sets_input = os.getenv('SETS_TO_UPLOAD', '').strip()
 if sets_input:
-    # Split by comma and clean up whitespace
     MODERN_SETS = [s.strip() for s in sets_input.split(',') if s.strip()]
     print(f"📌 Using provided sets: {', '.join(MODERN_SETS)}")
 else:
     MODERN_SETS = DEFAULT_MODERN_SETS
     print(f"📌 Using default set list ({len(MODERN_SETS)} sets)")
 
-# Check for minimum price override from GitHub Actions input
+# Check for minimum price override
 min_price_input = os.getenv('MIN_PRICE_OVERRIDE', '').strip()
 if min_price_input:
     try:
@@ -153,10 +150,9 @@ def fetch_cards_from_api(set_code, max_retries=3):
         # Retry logic for each page
         while retry_count < max_retries and not success:
             try:
-                # Simple query format (no quotes needed for set.id)
                 url = f"{POKEMONTCG_API_URL}/cards?q=set.id:{set_code}&page={page}&pageSize=250"
                 
-                # Debug output
+                # Debug output on first page
                 if page == 1:
                     print(f"   🔗 API URL: {url}")
                     print(f"   🔑 Has API Key: {'Yes' if TCG_API_KEY else 'No'}")
@@ -166,7 +162,7 @@ def fetch_cards_from_api(set_code, max_retries=3):
                 
                 if response.status_code != 200:
                     print(f"   ⚠️  API returned status {response.status_code}")
-                    print(f"   📄 Response body: {response.text[:500]}")  # Show first 500 chars
+                    print(f"   📄 Response body: {response.text[:500]}")
                     retry_count += 1
                     if retry_count < max_retries:
                         print(f"   🔄 Retrying... (attempt {retry_count + 1}/{max_retries})")
@@ -194,7 +190,7 @@ def fetch_cards_from_api(set_code, max_retries=3):
                     return all_cards
                 
                 page += 1
-                time.sleep(0.5)  # Increased rate limiting delay
+                time.sleep(0.5)  # Rate limiting delay
                 
             except requests.exceptions.Timeout:
                 retry_count += 1
@@ -203,7 +199,6 @@ def fetch_cards_from_api(set_code, max_retries=3):
                     time.sleep(2 ** retry_count)  # Exponential backoff
                 else:
                     print(f"   ❌ Failed after {max_retries} timeout attempts on page {page}")
-                    # Return what we have so far
                     return all_cards
                     
             except Exception as e:
@@ -247,12 +242,15 @@ def filter_eligible_cards(api_cards, min_price_cad):
     return eligible
 
 
-def card_exists_in_db(card_id):
-    """Check if card already exists in database"""
+def card_exists_in_db(set_code, number):
+    """Check if card already exists in database using set_code + number"""
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id FROM cards WHERE card_id = %s", (card_id,))
+    cursor.execute(
+        "SELECT id FROM cards WHERE set_code = %s AND number = %s", 
+        (set_code, number)
+    )
     result = cursor.fetchone()
     
     cursor.close()
@@ -267,23 +265,39 @@ def insert_card_to_db(api_card, market_price_cad, selling_price_cad):
     cursor = conn.cursor()
     
     try:
-        # Insert card
+        # Extract values from API card
+        set_code = api_card.get('set', {}).get('id')
+        set_name = api_card.get('set', {}).get('name')
+        number = api_card.get('number')
+        name = api_card.get('name')
+        rarity = api_card.get('rarity')
+        
+        # Get image URL (prefer large, fallback to small)
+        images = api_card.get('images', {})
+        img_url = images.get('large') or images.get('small')
+        
+        # Get tcgplayer_id if available
+        tcgplayer = api_card.get('tcgplayer', {})
+        tcgplayer_id = tcgplayer.get('productId')
+        
+        # Variant is empty for base cards (could be "Holo", "Reverse Holo", etc.)
+        variant = None
+        
+        # Insert card - MATCHES YOUR ACTUAL SCHEMA
         cursor.execute("""
-            INSERT INTO cards (card_id, name, set_id, set_name, number, rarity, 
-                              supertype, subtypes, image_url, api_data, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            INSERT INTO cards (name, set_name, set_code, number, variant, rarity, 
+                              img_url, tcgplayer_id, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             RETURNING id
         """, (
-            api_card['id'],
-            api_card.get('name'),
-            api_card.get('set', {}).get('id'),
-            api_card.get('set', {}).get('name'),
-            api_card.get('number'),
-            api_card.get('rarity'),
-            api_card.get('supertype'),
-            Json(api_card.get('subtypes', [])),
-            api_card.get('images', {}).get('large') or api_card.get('images', {}).get('small'),
-            Json(api_card)
+            name,
+            set_name,
+            set_code,
+            number,
+            variant,
+            rarity,
+            img_url,
+            tcgplayer_id
         ))
         
         card_db_id = cursor.fetchone()[0]
@@ -326,7 +340,7 @@ def insert_card_to_db(api_card, market_price_cad, selling_price_cad):
         
     except Exception as e:
         conn.rollback()
-        print(f"      ❌ DB error: {str(e)[:200]}")
+        print(f"      ❌ DB error for {api_card.get('name', 'unknown')}: {str(e)[:200]}")
         return False
     finally:
         cursor.close()
@@ -372,9 +386,10 @@ def process_set(set_code, min_price_cad):
     
     for idx, card_data in enumerate(eligible_cards, 1):
         api_card = card_data['api_card']
-        card_id = api_card['id']
+        set_code_val = api_card.get('set', {}).get('id')
+        number = api_card.get('number')
         
-        if card_exists_in_db(card_id):
+        if card_exists_in_db(set_code_val, number):
             existing_cards += 1
             continue
         
