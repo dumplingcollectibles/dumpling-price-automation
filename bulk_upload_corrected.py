@@ -153,13 +153,20 @@ def fetch_cards_from_api(set_code, max_retries=3):
         # Retry logic for each page
         while retry_count < max_retries and not success:
             try:
+                # Simple query format (no quotes needed for set.id)
                 url = f"{POKEMONTCG_API_URL}/cards?q=set.id:{set_code}&page={page}&pageSize=250"
                 
-                # Increased timeout: 60 seconds (was 30)
+                # Debug output
+                if page == 1:
+                    print(f"   🔗 API URL: {url}")
+                    print(f"   🔑 Has API Key: {'Yes' if TCG_API_KEY else 'No'}")
+                
+                # Increased timeout: 60 seconds
                 response = requests.get(url, headers=headers, timeout=60)
                 
                 if response.status_code != 200:
                     print(f"   ⚠️  API returned status {response.status_code}")
+                    print(f"   📄 Response body: {response.text[:500]}")  # Show first 500 chars
                     retry_count += 1
                     if retry_count < max_retries:
                         print(f"   🔄 Retrying... (attempt {retry_count + 1}/{max_retries})")
