@@ -139,41 +139,78 @@ def calculate_buylist_prices(market_price_cad, condition, nm_buy_cash=None, nm_b
         return None, None
 
 
-def fetch_cards_from_api(set_code):
-    """Fetch all cards from Pokemon TCG API for a given set"""
+def fetch_cards_from_api(set_code, max_retries=3):
+    """Fetch all cards from Pokemon TCG API for a given set with retry logic"""
     headers = {"X-Api-Key": TCG_API_KEY} if TCG_API_KEY else {}
     all_cards = []
     page = 1
     total_cards = None
     
     while True:
-        try:
-            url = f"{POKEMONTCG_API_URL}/cards?q=set.id:{set_code}&page={page}&pageSize=250"
-            response = requests.get(url, headers=headers, timeout=30)
-            
-            if response.status_code != 200:
-                print(f"   ⚠️  API returned status {response.status_code}")
-                break
-            
-            data = response.json()
-            cards = data.get('data', [])
-            
-            if not cards:
-                break
-            
-            all_cards.extend(cards)
-            
-            if total_cards is None:
-                total_cards = data.get('totalCount', len(cards))
-            
-            if len(all_cards) >= total_cards:
-                break
-            
-            page += 1
-            time.sleep(0.3)  # Rate limiting
-            
-        except Exception as e:
-            print(f"   ❌ API error: {str(e)[:100]}")
+        retry_count = 0
+        success = False
+        
+        # Retry logic for each page
+        while retry_count < max_retries and not success:
+            try:
+                url = f"{POKEMONTCG_API_URL}/cards?q=set.id:{set_code}&page={page}&pageSize=250"
+                
+                # Increased timeout: 60 seconds (was 30)
+                response = requests.get(url, headers=headers, timeout=60)
+                
+                if response.status_code != 200:
+                    print(f"   ⚠️  API returned status {response.status_code}")
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"   🔄 Retrying... (attempt {retry_count + 1}/{max_retries})")
+                        time.sleep(2 ** retry_count)  # Exponential backoff: 2s, 4s, 8s
+                    continue
+                
+                data = response.json()
+                cards = data.get('data', [])
+                
+                if not cards:
+                    # No more cards, exit successfully
+                    return all_cards
+                
+                all_cards.extend(cards)
+                success = True
+                
+                if total_cards is None:
+                    total_cards = data.get('totalCount', len(cards))
+                    print(f"   📊 Total cards in set: {total_cards}")
+                else:
+                    # Show progress
+                    print(f"   📥 Fetched {len(all_cards)}/{total_cards} cards (page {page})")
+                
+                if len(all_cards) >= total_cards:
+                    return all_cards
+                
+                page += 1
+                time.sleep(0.5)  # Increased rate limiting delay
+                
+            except requests.exceptions.Timeout:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"   ⏱️  Timeout on page {page}, retrying... (attempt {retry_count + 1}/{max_retries})")
+                    time.sleep(2 ** retry_count)  # Exponential backoff
+                else:
+                    print(f"   ❌ Failed after {max_retries} timeout attempts on page {page}")
+                    # Return what we have so far
+                    return all_cards
+                    
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"   ⚠️  Error on page {page}: {str(e)[:100]}")
+                    print(f"   🔄 Retrying... (attempt {retry_count + 1}/{max_retries})")
+                    time.sleep(2 ** retry_count)
+                else:
+                    print(f"   ❌ Failed after {max_retries} attempts: {str(e)[:100]}")
+                    return all_cards
+        
+        if not success:
+            # Failed all retries for this page
             break
     
     return all_cards
@@ -300,7 +337,12 @@ def process_set(set_code, min_price_cad):
     api_cards = fetch_cards_from_api(set_code)
     
     if not api_cards:
-        print(f"   ⚠️  No cards found in API for set '{set_code}'")
+        print(f"   ❌ FAILED: No cards retrieved from API for set '{set_code}'")
+        print(f"   💡 This could be due to:")
+        print(f"      • Network timeout (GitHub Actions network issue)")
+        print(f"      • Invalid set code")
+        print(f"      • API rate limiting")
+        print(f"   🔄 Set marked as FAILED - will retry on next run")
         return False, 0, 0  # Failed
     
     print(f"   ✅ Found {len(api_cards)} cards in API")
