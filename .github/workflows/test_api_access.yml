@@ -1,0 +1,11 @@
+name: Test API Access
+on: workflow_dispatch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test PokemonTCG API
+        run: |
+          curl -H "X-Api-Key: ${{ secrets.TCG_API_KEY }}" \
+            "https://api.pokemontcg.io/v2/cards/swsh1-142"
