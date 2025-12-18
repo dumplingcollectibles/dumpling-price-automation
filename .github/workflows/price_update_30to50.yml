@@ -35,4 +35,4 @@ jobs:
           SHOPIFY_API_VERSION: '2025-01'
           EMAIL_ENABLED: 'false'
         run: |
-          python price_update.py "$30-50"
+          python price_update.py '$30-50'
