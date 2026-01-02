@@ -1,9 +1,9 @@
 name: Price Update - $100+ Cards
 
-# Runs daily at 12:00 AM UTC
+# Runs daily at 2:00 AM EST (7:00 AM UTC)
 on:
   schedule:
-    - cron: '0 0 * * *'  # 12:00 AM UTC daily
+    - cron: '0 7 * * *'  # 2:00 AM EST daily
   workflow_dispatch:  # Manual trigger
 
 jobs:
