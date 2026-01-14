@@ -1,8 +1,8 @@
 """
-Daily Price Tracker - Database Copy Version (Fixed)
+Daily Price Tracker - Database Copy Version (With Card Names)
 Copies prices from variants table to price_history
 
-NO API calls needed!
+Stores card name and set name for easy reference!
 
 Usage:
     python daily_price_tracker.py
@@ -40,11 +40,13 @@ def track_prices_from_database():
         print("📦 Getting cards with inventory and prices...")
         
         # Get all cards with inventory and their current prices
+        # INCLUDING card name and set name!
         cursor.execute("""
             SELECT 
                 c.id as card_id,
                 c.name as card_name,
                 c.set_code,
+                c.set_name,
                 c.number,
                 v.id as variant_id,
                 v.condition,
@@ -102,23 +104,27 @@ def track_prices_from_database():
                 existing = cursor.fetchone()
                 
                 if existing:
-                    # Update existing entry
+                    # Update existing entry (including names in case they changed)
                     cursor.execute("""
                         UPDATE price_history
                         SET market_price_usd = %s,
                             market_price_cad = %s,
                             suggested_price_cad = %s,
+                            card_name = %s,
+                            set_name = %s,
                             checked_at = NOW()
                         WHERE id = %s
                     """, (
                         market_price_usd,
                         price_cad,
                         price_cad,
+                        card['card_name'],
+                        card['set_name'],
                         existing['id']
                     ))
                     updated += 1
                 else:
-                    # Insert new entry
+                    # Insert new entry WITH card name and set name
                     cursor.execute("""
                         INSERT INTO price_history (
                             card_id,
@@ -126,15 +132,19 @@ def track_prices_from_database():
                             market_price_usd,
                             market_price_cad,
                             suggested_price_cad,
+                            card_name,
+                            set_name,
                             source,
                             checked_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     """, (
                         card['card_id'],
                         card['condition'],
                         market_price_usd,
                         price_cad,
                         price_cad,
+                        card['card_name'],
+                        card['set_name'],
                         'database_copy'
                     ))
                     tracked += 1
@@ -147,9 +157,8 @@ def track_prices_from_database():
             except Exception as e:
                 errors += 1
                 print(f"  ⚠️  Error storing {card['card_name']}: {str(e)[:80]}")
-                # Don't continue - rollback this card but keep going
+                # Rollback this card but keep going
                 conn.rollback()
-                # Start new transaction
                 continue
         
         # Commit all successful changes
