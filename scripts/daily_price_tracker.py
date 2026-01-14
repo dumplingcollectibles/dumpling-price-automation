@@ -1,12 +1,11 @@
 """
-Daily Price Tracker - Database Copy Version
+Daily Price Tracker - Database Copy Version (Fixed)
 Copies prices from variants table to price_history
 
-Since you update prices daily anyway, just track what's already in your database!
 NO API calls needed!
 
 Usage:
-    python daily_price_tracker_simple.py
+    python daily_price_tracker.py
 """
 
 import os
@@ -81,53 +80,79 @@ def track_prices_from_database():
         print("💾 Storing price snapshots...")
         
         tracked = 0
+        updated = 0
         errors = 0
         
-        # Insert all prices in one go (much faster!)
+        # Process each card
         for card in cards:
             try:
                 # Convert CAD price back to USD for storage
                 price_cad = float(card['price_cad'])
                 market_price_usd = price_cad / USD_TO_CAD
                 
-                # Store the snapshot
+                # Check if entry already exists for today
                 cursor.execute("""
-                    INSERT INTO price_history (
-                        card_id,
-                        condition,
-                        market_price_usd,
-                        market_price_cad,
-                        suggested_price_cad,
-                        source,
-                        checked_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (card_id, condition, DATE(NOW())) 
-                    DO UPDATE SET
-                        market_price_usd = EXCLUDED.market_price_usd,
-                        market_price_cad = EXCLUDED.market_price_cad,
-                        suggested_price_cad = EXCLUDED.suggested_price_cad,
-                        checked_at = NOW()
-                """, (
-                    card['card_id'],
-                    card['condition'],
-                    market_price_usd,
-                    price_cad,
-                    price_cad,  # Your price is already the suggested price
-                    'database_copy'
-                ))
+                    SELECT id 
+                    FROM price_history 
+                    WHERE card_id = %s 
+                    AND condition = %s 
+                    AND DATE(checked_at) = CURRENT_DATE
+                """, (card['card_id'], card['condition']))
                 
-                tracked += 1
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Update existing entry
+                    cursor.execute("""
+                        UPDATE price_history
+                        SET market_price_usd = %s,
+                            market_price_cad = %s,
+                            suggested_price_cad = %s,
+                            checked_at = NOW()
+                        WHERE id = %s
+                    """, (
+                        market_price_usd,
+                        price_cad,
+                        price_cad,
+                        existing['id']
+                    ))
+                    updated += 1
+                else:
+                    # Insert new entry
+                    cursor.execute("""
+                        INSERT INTO price_history (
+                            card_id,
+                            condition,
+                            market_price_usd,
+                            market_price_cad,
+                            suggested_price_cad,
+                            source,
+                            checked_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """, (
+                        card['card_id'],
+                        card['condition'],
+                        market_price_usd,
+                        price_cad,
+                        price_cad,
+                        'database_copy'
+                    ))
+                    tracked += 1
                 
                 # Show progress
-                if tracked % 50 == 0:
-                    print(f"  Progress: {tracked}/{len(cards)}")
+                total_processed = tracked + updated
+                if total_processed % 50 == 0:
+                    print(f"  Progress: {total_processed}/{len(cards)}")
                 
             except Exception as e:
                 errors += 1
-                print(f"  ⚠️  Error storing {card['card_name']}: {str(e)[:50]}")
+                print(f"  ⚠️  Error storing {card['card_name']}: {str(e)[:80]}")
+                # Don't continue - rollback this card but keep going
+                conn.rollback()
+                # Start new transaction
                 continue
         
-        # Commit all at once
+        # Commit all successful changes
         conn.commit()
         
         print()
@@ -136,13 +161,14 @@ def track_prices_from_database():
         print("="*70)
         print(f"📊 Summary:")
         print(f"  • Total variants: {len(cards)}")
-        print(f"  • Successfully tracked: {tracked}")
+        print(f"  • New records created: {tracked}")
+        print(f"  • Existing records updated: {updated}")
         print(f"  • Errors: {errors}")
         print()
         
         return {
             'total_cards': len(cards),
-            'tracked': tracked,
+            'tracked': tracked + updated,
             'skipped': 0,
             'errors': errors
         }
