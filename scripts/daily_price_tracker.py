@@ -1,8 +1,9 @@
 """
-Daily Price Tracker - Database Copy Version (With Card Names)
+Daily Price Tracker - Database Copy Version (With Card Names + 10% Markup)
 Copies prices from variants table to price_history
 
 Stores card name and set name for easy reference!
+Applies 10% markup: suggested_price_cad = market_price_cad × 1.1
 
 Usage:
     python daily_price_tracker.py
@@ -88,9 +89,16 @@ def track_prices_from_database():
         # Process each card
         for card in cards:
             try:
-                # Convert CAD price back to USD for storage
+                # Get your current price
                 price_cad = float(card['price_cad'])
-                market_price_usd = price_cad / USD_TO_CAD
+                
+                # Assume your price already has markup, back-calculate market price
+                # market_price = your_price / 1.1
+                market_price_cad = price_cad / 1.1
+                market_price_usd = market_price_cad / USD_TO_CAD
+                
+                # Suggested price = market price × 1.1 (10% markup)
+                suggested_price_cad = market_price_cad * 1.1
                 
                 # Check if entry already exists for today
                 cursor.execute("""
@@ -116,8 +124,8 @@ def track_prices_from_database():
                         WHERE id = %s
                     """, (
                         market_price_usd,
-                        price_cad,
-                        price_cad,
+                        market_price_cad,
+                        suggested_price_cad,
                         card['card_name'],
                         card['set_name'],
                         existing['id']
@@ -141,8 +149,8 @@ def track_prices_from_database():
                         card['card_id'],
                         card['condition'],
                         market_price_usd,
-                        price_cad,
-                        price_cad,
+                        market_price_cad,
+                        suggested_price_cad,
                         card['card_name'],
                         card['set_name'],
                         'database_copy'
