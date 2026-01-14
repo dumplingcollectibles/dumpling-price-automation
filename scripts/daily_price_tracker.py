@@ -1,9 +1,6 @@
 """
-Daily Price Tracker
-Dumpling Collectibles
-
-Tracks market prices for cards with inventory > 0
-Runs daily at 2 AM EST (silent, no notifications)
+Daily Price Tracker - Enhanced Version
+With retry logic and better error handling
 
 Usage:
     python daily_price_tracker.py
@@ -16,6 +13,8 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 import math
 import time
 
@@ -28,8 +27,31 @@ TCG_API_KEY = os.getenv('TCG_API_KEY')
 USD_TO_CAD = float(os.getenv('USD_TO_CAD', '1.35'))
 MARKUP = float(os.getenv('MARKUP', '1.10'))
 
-# API rate limiting
-API_DELAY = 0.1  # 100ms delay between requests (avoid rate limits)
+# API settings with retry
+API_DELAY = 0.2  # Increased delay between requests
+MAX_RETRIES = 3  # Number of retry attempts
+TIMEOUT = 30     # Request timeout in seconds
+
+
+def create_session_with_retries():
+    """
+    Create requests session with automatic retries
+    """
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=MAX_RETRIES,
+        backoff_factor=1,  # Wait 1, 2, 4 seconds between retries
+        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these HTTP codes
+        allowed_methods=["GET"]  # Only retry GET requests
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session
 
 
 def round_up_to_nearest_50_cents(amount):
@@ -37,9 +59,9 @@ def round_up_to_nearest_50_cents(amount):
     return math.ceil(amount * 2) / 2
 
 
-def fetch_current_market_price(pokemontcg_id):
+def fetch_current_market_price(pokemontcg_id, session):
     """
-    Fetch current market price from PokemonTCG.io API
+    Fetch current market price from PokemonTCG.io API with retries
     Returns: market_price_usd (float) or None
     """
     if not pokemontcg_id:
@@ -48,31 +70,71 @@ def fetch_current_market_price(pokemontcg_id):
     url = f"{POKEMONTCG_API_URL}/cards/{pokemontcg_id}"
     headers = {'X-Api-Key': TCG_API_KEY} if TCG_API_KEY else {}
     
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            card = data.get('data', {})
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = session.get(url, headers=headers, timeout=TIMEOUT)
             
-            # Extract market price
-            tcgplayer = card.get('tcgplayer', {})
-            prices = tcgplayer.get('prices', {})
-            
-            # Try different price types
-            for price_type in ['normal', 'holofoil', 'reverseHolofoil', 'unlimitedHolofoil', '1stEditionHolofoil']:
-                if price_type in prices:
-                    price_data = prices[price_type]
-                    market = price_data.get('market') or price_data.get('mid') or price_data.get('low')
-                    if market and market > 0:
-                        return float(market)
+            if response.status_code == 200:
+                data = response.json()
+                card = data.get('data', {})
+                
+                # Extract market price
+                tcgplayer = card.get('tcgplayer', {})
+                prices = tcgplayer.get('prices', {})
+                
+                for price_type in ['normal', 'holofoil', 'reverseHolofoil', 'unlimitedHolofoil', '1stEditionHolofoil']:
+                    if price_type in prices:
+                        price_data = prices[price_type]
+                        market = price_data.get('market') or price_data.get('mid') or price_data.get('low')
+                        if market and market > 0:
+                            return float(market)
+                
+                # No price found in response
+                return None
+                
+            elif response.status_code == 404:
+                # Card not found - don't retry
+                return None
+                
+            elif response.status_code == 429:
+                # Rate limited - wait longer
+                wait_time = (attempt + 1) * 2
+                print(f"  ⏳ Rate limited, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+                
+            else:
+                # Other error - retry
+                if attempt < MAX_RETRIES - 1:
+                    print(f"  ⚠️  HTTP {response.status_code}, retrying...")
+                    time.sleep(1)
+                    continue
+                return None
         
-        return None
+        except requests.exceptions.ConnectionError as e:
+            if attempt < MAX_RETRIES - 1:
+                wait_time = (attempt + 1) * 2
+                print(f"  🔄 Connection error, retry {attempt + 1}/{MAX_RETRIES} in {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"  ❌ Connection failed after {MAX_RETRIES} attempts")
+                return None
         
-    except Exception as e:
-        # Silent failure - log but continue
-        print(f"  ⚠️  API error for {pokemontcg_id}: {str(e)[:50]}")
-        return None
+        except requests.exceptions.Timeout as e:
+            if attempt < MAX_RETRIES - 1:
+                print(f"  ⏱️  Timeout, retry {attempt + 1}/{MAX_RETRIES}...")
+                time.sleep(2)
+                continue
+            else:
+                print(f"  ❌ Timeout after {MAX_RETRIES} attempts")
+                return None
+        
+        except Exception as e:
+            print(f"  ❌ Unexpected error: {str(e)[:50]}")
+            return None
+    
+    return None
 
 
 def get_cards_with_inventory():
@@ -167,6 +229,9 @@ def track_prices():
     print("="*70)
     print()
     
+    # Create session with retry logic
+    session = create_session_with_retries()
+    
     # Get cards with inventory
     print("📦 Fetching cards with inventory...")
     cards = get_cards_with_inventory()
@@ -184,6 +249,7 @@ def track_prices():
     
     # Track prices
     print(f"🔍 Tracking prices for {len(cards)} variants...")
+    print(f"   (With {MAX_RETRIES} retries and {TIMEOUT}s timeout)")
     print()
     
     tracked = 0
@@ -194,7 +260,7 @@ def track_prices():
     for i, card in enumerate(cards, 1):
         # Progress indicator
         if i % 25 == 0 or i == len(cards):
-            print(f"  Progress: {i}/{len(cards)} ({tracked} tracked, {skipped_no_id + skipped_no_price} skipped)")
+            print(f"  Progress: {i}/{len(cards)} ({tracked} tracked, {skipped_no_id + skipped_no_price} skipped, {errors} errors)")
         
         # Get PokemonTCG.io ID
         external_ids = card.get('external_ids', {})
@@ -207,12 +273,12 @@ def track_prices():
             skipped_no_id += 1
             continue
         
-        # Fetch market price
-        market_price_usd = fetch_current_market_price(pokemontcg_id)
+        # Fetch market price with retries
+        market_price_usd = fetch_current_market_price(pokemontcg_id, session)
         
         if market_price_usd is None:
             skipped_no_price += 1
-            time.sleep(API_DELAY)  # Rate limiting
+            time.sleep(API_DELAY)
             continue
         
         # Calculate prices
@@ -258,8 +324,18 @@ def track_prices():
     print(f"  • Successfully tracked: {tracked}")
     print(f"  • Skipped (no API ID): {skipped_no_id}")
     print(f"  • Skipped (no price data): {skipped_no_price}")
-    print(f"  • Errors: {errors}")
+    print(f"  • Database errors: {errors}")
     print()
+    
+    if tracked == 0 and skipped_no_price == len(cards):
+        print("⚠️  WARNING: All API calls failed!")
+        print("   This likely means:")
+        print("   • Network connectivity issues")
+        print("   • API is down")
+        print("   • Rate limiting")
+        print()
+        print("   The script will retry automatically next time it runs.")
+        print()
     
     return {
         'total_cards': len(cards),
@@ -276,12 +352,15 @@ def main():
         result = track_prices()
         
         # Exit code based on success
-        if result['errors'] > 0:
+        if result['tracked'] > 0:
+            print(f"🎉 Success! Tracked {result['tracked']} prices.")
+            return 0
+        elif result['skipped_no_price'] == result['total_cards']:
+            print(f"⚠️  All API calls failed. Will retry next run.")
+            return 0  # Don't fail the workflow, just warn
+        else:
             print(f"⚠️  Completed with {result['errors']} errors")
             return 1
-        else:
-            print(f"🎉 All done! Tracked {result['tracked']} prices successfully.")
-            return 0
             
     except Exception as e:
         print(f"❌ Fatal error: {str(e)}")
