@@ -1,0 +1,63 @@
+name: Weekly Price Report
+
+on:
+  schedule:
+    # Run every Friday at 1 PM EST (6 PM UTC in winter, 5 PM UTC in summer)
+    # Using 6 PM UTC for EST winter time
+    - cron: '0 18 * * 5'
+  
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  generate-and-send-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary requests python-dotenv
+      
+      - name: Generate price report
+        env:
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+          POKEMONTCG_API_URL: ${{ secrets.POKEMONTCG_API_URL }}
+          TCG_API_KEY: ${{ secrets.TCG_API_KEY }}
+          USD_TO_CAD: ${{ secrets.USD_TO_CAD }}
+          MARKUP: ${{ secrets.MARKUP }}
+        run: |
+          python scripts/generate_price_report.py
+      
+      - name: Send email report
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+        run: |
+          python scripts/send_report_email.py
+      
+      - name: Upload reports as artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: weekly-price-reports
+          path: |
+            price_report_*.txt
+            price_report_*.html
+          retention-days: 90
+      
+      - name: Report completion
+        if: always()
+        run: |
+          echo "Weekly price report completed at $(date)"
+          echo "Check your email!"

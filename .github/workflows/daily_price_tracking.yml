@@ -1,0 +1,43 @@
+name: Daily Price Tracking
+
+on:
+  schedule:
+    # Run every day at 2 AM EST (7 AM UTC in winter, 6 AM UTC in summer)
+    # Using 7 AM UTC for EST winter time
+    - cron: '0 7 * * *'
+  
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  track-prices:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary requests python-dotenv
+      
+      - name: Track daily prices
+        env:
+          NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
+          POKEMONTCG_API_URL: ${{ secrets.POKEMONTCG_API_URL }}
+          TCG_API_KEY: ${{ secrets.TCG_API_KEY }}
+          USD_TO_CAD: ${{ secrets.USD_TO_CAD }}
+          MARKUP: ${{ secrets.MARKUP }}
+        run: |
+          python scripts/daily_price_tracker.py
+      
+      - name: Report completion
+        if: always()
+        run: |
+          echo "Daily price tracking completed at $(date)"
+          echo "Check logs above for details"
