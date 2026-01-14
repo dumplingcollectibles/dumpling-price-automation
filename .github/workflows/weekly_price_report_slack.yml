@@ -1,4 +1,4 @@
-name: Weekly Price Report
+name: Weekly Price Report (Slack)
 
 on:
   schedule:
@@ -36,16 +36,12 @@ jobs:
         run: |
           python scripts/generate_price_report.py
       
-      - name: Send email report
+      - name: Send Slack report
         env:
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
         run: |
-          python scripts/send_report_email.py
+          python scripts/send_report_slack.py
       
       - name: Upload reports as artifacts
         uses: actions/upload-artifact@v4
@@ -60,4 +56,4 @@ jobs:
         if: always()
         run: |
           echo "Weekly price report completed at $(date)"
-          echo "Check your email!"
+          echo "Check your Slack channel!"
