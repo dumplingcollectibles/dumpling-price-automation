@@ -2,9 +2,9 @@ name: Daily Price Tracking
 
 on:
   schedule:
-    # Run every day at 2 AM EST (7 AM UTC in winter, 6 AM UTC in summer)
-    # Using 7 AM UTC for EST winter time
-    - cron: '0 7 * * *'
+    # Run every day at 9 AM EST (2 PM UTC in winter, 1 PM UTC in summer)
+    # Using 2 PM UTC for EST winter time
+    - cron: '0 14 * * *'
   
   # Allow manual trigger for testing
   workflow_dispatch:
@@ -29,10 +29,7 @@ jobs:
       - name: Track daily prices
         env:
           NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
-          POKEMONTCG_API_URL: ${{ secrets.POKEMONTCG_API_URL }}
-          TCG_API_KEY: ${{ secrets.TCG_API_KEY }}
           USD_TO_CAD: ${{ secrets.USD_TO_CAD }}
-          MARKUP: ${{ secrets.MARKUP }}
         run: |
           python scripts/daily_price_tracker.py
       
