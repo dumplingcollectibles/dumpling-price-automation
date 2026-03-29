@@ -39,7 +39,7 @@ jobs:
           MARKUP: "1.10"
           SHOPIFY_API_VERSION: "2025-01"
         run: |
-          python price_update_ultra_conservative.py
+          python -m src.pricing_engine.pricing_job all
       
       - name: Upload logs (if any)
         if: always()
