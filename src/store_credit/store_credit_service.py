@@ -2,12 +2,9 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from src.config import config
+from src.store_credit.store_credit_config import store_credit_config
 
-# Importing email helper via the new centralized path
-try:
-    from src.notifications.email_helper import send_gift_card_email
-except ImportError:
-    send_gift_card_email = None
+from src.notifications.store_credit_reporter import StoreCreditReporter
 
 class StoreCreditService:
     """
@@ -20,6 +17,7 @@ class StoreCreditService:
     def __init__(self, db_conn=None):
         # Supports dependency injection for testing, or creates its own connection
         self.conn = db_conn or psycopg2.connect(config.DATABASE_URL)
+        self.reporter = StoreCreditReporter()
         
     def __del__(self):
         # Automatically tear down the database connection when the service is destroyed
@@ -110,14 +108,15 @@ class StoreCreditService:
         cursor.close()
         return current_balance, new_balance
 
-    def issue_credit(self, email, amount, transaction_type='adjustment', reason=None, create_gift_card=False, reference_type=None, reference_id=None, notify=False):
+    def issue_credit(self, email, amount, transaction_type=store_credit_config.DEFAULT_TRANSACTION_TYPE, reason=None, create_gift_card=False, reference_type=None, reference_id=None, notify=False):
         """High-level controller wrapper executing the full issue-credit workflow dynamically."""
         user = self.find_user(email, create_if_missing=True)
         user_id = user['id']
         
         gift_card_code = None
         if create_gift_card and amount > 0:
-            gift_card_code = self.create_shopify_gift_card(amount, note=f"Store credit issued for {email}")
+            note = store_credit_config.DEFAULT_GIFT_CARD_NOTE_TEMPLATE.format(email=email)
+            gift_card_code = self.create_shopify_gift_card(amount, note=note)
             
         old_balance, new_balance = self.record_transaction(
             user_id=user_id,
@@ -130,8 +129,8 @@ class StoreCreditService:
         )
         
         email_sent = False
-        if notify and send_gift_card_email and amount > 0:
-            email_sent = send_gift_card_email(
+        if notify and amount > 0:
+            email_sent = self.reporter.send_gift_card_notification(
                 customer_email=email,
                 gift_card_code=gift_card_code, 
                 amount=amount,
