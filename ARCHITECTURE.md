@@ -1,6 +1,8 @@
 # Dumpling Collectibles - Complete Architecture & System Spec
 
-This document details the exact state of the Dumpling Price Automation system today. It covers all API calls, daily cron workflows, UI data flows, and specific constraints within the application.
+This document details the exact state of the Dumpling Price Automation system today. 
+
+**System Context:** This repository represents a completely decoupled, standalone web application that operates alongside the main Dumpling Collectibles Shopify storefront. Its primary responsibilities are acting as a dynamic nightly pricing engine, maintaining an internal inventory ledger, and hosting a custom "Buylist" web portal (C2B) that handles dynamic customer sale quotes—a feature Shopify natively lacks.
 
 ## 1. High-Level Architecture Overview
 
@@ -243,6 +245,8 @@ All primary autonomous processes currently run through **GitHub Actions** (`work
 ---
 
 ## 5. User Interaction Flows (Customer Facing)
+
+*Note: Standard customer eCommerce purchases (B2C) are fundamentally handled on the external Shopify storefront. This codebase's custom Javascript frontend exists strictly to handle the complex C2B (Customer-to-Business) "Buylist" flow, allowing users to interactively search and submit lists of cards for immediate cash or store credit quotes based on the natively tracked market pricing matrix.*
 
 ### 5.1 Buylist Quoting (`frontend/` & `api/buylist_app.py`)
 1.  **Discovery:** User loads the Vanilla JS site and queries a card name. The `GET /api/cards/search` endpoint only returns cards actively bought by checking if `v.buy_cash > 0` and groups condition variables (`NM`, `LP`, etc.).
