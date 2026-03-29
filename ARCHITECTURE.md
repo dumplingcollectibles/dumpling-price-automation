@@ -8,29 +8,29 @@ This document details the exact state of the Dumpling Price Automation system to
 graph TD
     %% Environments
     subgraph Operations [GitHub Actions & Scripts]
-        DailyPriceCron[daily-price-update.yml]
-        PriceUpdater[price_update*.py]
-        LocalSnapshot[daily_price_tracker.py]
+        DailyPriceCron["daily-price-update.yml"]
+        PriceUpdater["price_update*.py"]
+        LocalSnapshot["daily_price_tracker.py"]
     end
 
     subgraph Frontend [Static Frontend]
-        UI[Buylist Web App (HTML/JS)]
+        UI["Buylist Web App (HTML/JS)"]
     end
 
     subgraph API [Flask Services]
-        BuylistAPI[Buylist API (Flask)]
-        WebhookServer[Webhook Server (Flask)]
+        BuylistAPI["Buylist API (Flask)"]
+        WebhookServer["Webhook Server (Flask)"]
     end
 
     subgraph External [External APIs]
-        Shopify[(Shopify API)]
-        PokemonTCG[(PokémonTCG API)]
-        Brevo[(Brevo & Zoho SMTP)]
-        Slack[(Slack Webhook)]
+        Shopify[("Shopify API")]
+        PokemonTCG[("PokémonTCG API")]
+        Brevo[("Brevo & Zoho SMTP")]
+        Slack[("Slack Webhook")]
     end
 
     subgraph DB [Database]
-        Postgres[(Neon PostgreSQL)]
+        Postgres[("Neon PostgreSQL")]
     end
 
     %% Internal Workflows
