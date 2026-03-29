@@ -59,12 +59,14 @@ jobs:
           STORE_NAME: ${{ secrets.STORE_NAME }}
           STORE_URL: ${{ secrets.STORE_URL }}
         run: |
-          python issue_store_credit_automated.py \
+          python -m src.store_credit.store_credit_cli issue \
             --email "${{ github.event.inputs.customer_email }}" \
             --amount "${{ github.event.inputs.amount }}" \
             --type "${{ github.event.inputs.transaction_type }}" \
             --buylist-id "${{ github.event.inputs.buylist_id }}" \
-            --notes "${{ github.event.inputs.notes }}"
+            --notes "${{ github.event.inputs.notes }}" \
+            --gift-card \
+            --notify
       
       - name: Show Results
         run: |
