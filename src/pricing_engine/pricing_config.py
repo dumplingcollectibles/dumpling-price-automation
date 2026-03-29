@@ -22,6 +22,20 @@ class PricingConfig:
     REPORTING_MIN_CHANGE_PERCENT = float(os.getenv('REPORTING_MIN_CHANGE_PERCENT', '5.0'))
 
     # ----------------------------------------------------------------------
+    # Operational Bucketing (Price Segments)
+    # ----------------------------------------------------------------------
+    BUCKET_CHOICES = ['$100+', '$50-100', '$30-50', '$20-30', '$10-20', '<$10']
+    
+    PRICE_BUCKETS = {
+        '$100+': lambda p: p >= 100,
+        '$50-100': lambda p: 50 <= p < 100,
+        '$30-50': lambda p: 30 <= p < 50,
+        '$20-30': lambda p: 20 <= p < 30,
+        '$10-20': lambda p: 10 <= p < 20,
+        '<$10': lambda p: p < 10
+    }
+
+    # ----------------------------------------------------------------------
     # Selling Market Margin Matrices
     # ----------------------------------------------------------------------
     CONDITION_MULTIPLIERS = {

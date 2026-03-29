@@ -11,6 +11,22 @@ class InventoryConfig:
     # ----------------------------------------------------------------------
     USD_TO_CAD = float(os.getenv('USD_TO_CAD', '1.35'))
     MARKUP = float(os.getenv('MARKUP', '1.10'))
+    DEFAULT_BASELINE_PRICE_USD = 0.50
+    
+    # ----------------------------------------------------------------------
+    # Buylist Pricing Matrix
+    # ----------------------------------------------------------------------
+    BUYLIST_NM_UNDER_50_CASH = 0.60
+    BUYLIST_NM_UNDER_50_CREDIT = 0.70
+    
+    BUYLIST_NM_50_TO_100_CASH = 0.70
+    BUYLIST_NM_50_TO_100_CREDIT = 0.80
+    
+    BUYLIST_NM_OVER_100_CASH = 0.75
+    BUYLIST_NM_OVER_100_CREDIT = 0.85
+    
+    BUYLIST_CONDITION_LP_MODIFIER = 0.75
+    BUYLIST_CONDITION_MP_MODIFIER = 0.50
     
     # ----------------------------------------------------------------------
     # Condition & Source Enumerations

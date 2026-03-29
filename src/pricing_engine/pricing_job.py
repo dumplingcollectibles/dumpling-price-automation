@@ -109,7 +109,7 @@ def main():
     
     # "bucket" command
     bucket_parser = subparsers.add_parser('bucket', help='Update specific price bucket')
-    bucket_parser.add_argument('range', choices=['$100+', '$50-100', '$30-50', '$20-30', '$10-20', '<$10'])
+    bucket_parser.add_argument('range', choices=pricing_config.BUCKET_CHOICES)
     
     # "series" command
     series_parser = subparsers.add_parser('series', help='Update specific set/series')
@@ -149,20 +149,11 @@ def main():
         conn.close()
         
         cards_with_prices = [(c, price_lookup.get(c['card_id'], 0)) for c in cards]
-        if args.range == "$100+":
-            cards_filtered = [c for c, p in cards_with_prices if p >= 100]
-        elif args.range == "$50-100":
-            cards_filtered = [c for c, p in cards_with_prices if 50 <= p < 100]
-        elif args.range == "$30-50":
-            cards_filtered = [c for c, p in cards_with_prices if 30 <= p < 50]
-        elif args.range == "$20-30":
-            cards_filtered = [c for c, p in cards_with_prices if 20 <= p < 30]
-        elif args.range == "$10-20":
-            cards_filtered = [c for c, p in cards_with_prices if 10 <= p < 20]
-        elif args.range == "<$10":
-            cards_filtered = [c for c, p in cards_with_prices if p < 10]
-            
-        cards = cards_filtered
+        filter_fn = pricing_config.PRICE_BUCKETS.get(args.range)
+        
+        if filter_fn:
+            cards = [c for c, p in cards_with_prices if filter_fn(p)]
+        
         print(f"   🎯 Filtered to bucket '{args.range}': {len(cards)} cards\n")
         
     # Split workloads for the thread pool

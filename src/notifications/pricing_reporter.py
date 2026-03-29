@@ -95,7 +95,7 @@ class PricingReporter:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP('smtp.zoho.com', 587) as server:
+            with smtplib.SMTP(config.ZOHO_SMTP_HOST, config.ZOHO_SMTP_PORT) as server:
                 server.starttls()
                 server.login(config.ZOHO_EMAIL, config.ZOHO_APP_PASSWORD)
                 server.send_message(msg)

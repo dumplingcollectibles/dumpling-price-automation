@@ -79,7 +79,7 @@ class InventoryService:
             if pt in prices:
                 m = prices[pt].get('market') or prices[pt].get('mid')
                 if m: return float(m)
-        return 0.50 # Default baseline
+        return inventory_config.DEFAULT_BASELINE_PRICE_USD
 
     def create_card_record(self, api_card, market_price_usd):
         """
@@ -136,6 +136,78 @@ class InventoryService:
         finally:
             cursor.close()
 
+    def fetch_set_cards(self, set_code):
+        """Paginates through the PokémonTCG API to retrieve all card data for a given set."""
+        cards, page = [], 1
+        while True:
+            url = f"{config.POKEMONTCG_API_URL}/cards"
+            params = {"q": f"set.id:{set_code}", "page": page, "pageSize": 50}
+            headers = {'X-Api-Key': config.TCG_API_KEY} if config.TCG_API_KEY else {}
+            resp = requests.get(url, params=params, headers=headers, timeout=30)
+            if resp.status_code != 200: break
+            
+            data = resp.json()
+            batch = data.get('data', [])
+            cards.extend(batch)
+            if len(cards) >= data.get('totalCount', 0) or not batch: break
+            page += 1
+        return cards
+
+    def calculate_buylist_price(self, market_price_cad, condition, nm_cash=None, nm_credit=None):
+        """Determines the buy-offer amount based on market value and item condition."""
+        if condition in ['HP', 'DMG']: return 0.0, 0.0
+        if condition == 'NM':
+            if market_price_cad < 50:
+                pct_cash = inventory_config.BUYLIST_NM_UNDER_50_CASH
+                pct_credit = inventory_config.BUYLIST_NM_UNDER_50_CREDIT
+            elif market_price_cad < 100:
+                pct_cash = inventory_config.BUYLIST_NM_50_TO_100_CASH
+                pct_credit = inventory_config.BUYLIST_NM_50_TO_100_CREDIT
+            else:
+                pct_cash = inventory_config.BUYLIST_NM_OVER_100_CASH
+                pct_credit = inventory_config.BUYLIST_NM_OVER_100_CREDIT
+            return round(market_price_cad * pct_cash, 2), round(market_price_cad * pct_credit, 2)
+        
+        if nm_cash is not None:
+            mult = inventory_config.BUYLIST_CONDITION_LP_MODIFIER if condition == 'LP' else inventory_config.BUYLIST_CONDITION_MP_MODIFIER
+            return round(nm_cash * mult, 2), round(nm_credit * mult, 2)
+        return 0.0, 0.0
+
+    def create_shopify_product_full(self, card_id, variants_data):
+        """Creates a multi-variant product on Shopify and links all internal IDs."""
+        cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("SELECT * FROM cards WHERE id = %s", (card_id,))
+            c = cursor.fetchone()
+            if not c: return None
+
+            product_payload = {
+                "product": {
+                    "title": f"{c['name']} - {c['set_name']} #{c['number']}",
+                    "body_html": f"<p>Set: {c['set_name']}<br>Rarity: {c['rarity']}</p>",
+                    "vendor": "Pokemon", "product_type": "Trading Card - Single",
+                    "status": "active", "images": [{"src": c['img_url']}],
+                    "options": [{"name": "Condition"}],
+                    "variants": [{"option1": v['condition'], "price": str(v['price']), "sku": v['sku'], 
+                                 "inventory_management": "shopify"} for v in variants_data]
+                }
+            }
+            
+            url = f"https://{config.SHOPIFY_SHOP_URL}/admin/api/{config.SHOPIFY_API_VERSION}/products.json"
+            resp = requests.post(url, json=product_payload, headers={"X-Shopify-Access-Token": config.SHOPIFY_ACCESS_TOKEN}, timeout=30)
+            if resp.status_code == 201:
+                shop_p = resp.json()['product']
+                cursor.execute("UPDATE products SET shopify_product_id = %s, status = 'active' WHERE card_id = %s", (str(shop_p['id']), card_id))
+                for v_db, v_shop in zip(variants_data, shop_p['variants']):
+                    cursor.execute("UPDATE variants SET shopify_variant_id = %s WHERE id = %s", (str(v_shop['id']), v_db['id']))
+                self.conn.commit()
+                return shop_p['id']
+        except Exception as e:
+            logger.error(f"Shopify Product Creation Failed: {e}")
+        finally:
+            cursor.close()
+        return None
+
     def get_variant_info(self, card_id, condition):
         """Fetches full variant state including current inventory and Shopify IDs."""
         cursor = self.conn.cursor(cursor_factory=RealDictCursor)
@@ -147,6 +219,40 @@ class InventoryService:
             WHERE p.card_id = %s AND v.condition = %s
         """, (card_id, condition.upper()))
         return cursor.fetchone()
+
+    def get_all_linked_variants(self):
+        """Fetches all local variants currently linked to a Shopify variant ID."""
+        cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT v.id as variant_id, v.shopify_variant_id, v.inventory_qty, v.condition, 
+                   v.sku, c.name as card_name, c.set_code, c.number
+            FROM variants v JOIN products p ON p.id = v.product_id
+            JOIN cards c ON c.id = p.card_id
+            WHERE v.shopify_variant_id IS NOT NULL
+            ORDER BY c.name, v.condition
+        """)
+        return cursor.fetchall()
+
+    def get_current_shopify_qty(self, shopify_variant_id):
+        """Pulls the real-time 'available' balance from Shopify for a specific variant."""
+        if not config.SHOPIFY_ACCESS_TOKEN or not config.SHOPIFY_LOCATION_ID:
+            return None
+        try:
+            # 1. Get inventory item ID
+            v_url = f"https://{config.SHOPIFY_SHOP_URL}/admin/api/{config.SHOPIFY_API_VERSION}/variants/{shopify_variant_id}.json"
+            v_resp = requests.get(v_url, headers={"X-Shopify-Access-Token": config.SHOPIFY_ACCESS_TOKEN}, timeout=10)
+            if v_resp.status_code != 200: return None
+            item_id = v_resp.json()['variant']['inventory_item_id']
+
+            # 2. Get current levels
+            l_url = f"https://{config.SHOPIFY_SHOP_URL}/admin/api/{config.SHOPIFY_API_VERSION}/inventory_levels.json"
+            params = {'inventory_item_ids': item_id, 'location_ids': config.SHOPIFY_LOCATION_ID}
+            l_resp = requests.get(l_url, params=params, headers={"X-Shopify-Access-Token": config.SHOPIFY_ACCESS_TOKEN}, timeout=10)
+            if l_resp.status_code == 200 and l_resp.json().get('inventory_levels'):
+                return l_resp.json()['inventory_levels'][0]['available']
+        except Exception:
+            return None
+        return None
 
     def update_quantity(self, variant_id, delta, unit_cost=None, source='other', notes=None, transaction_type='adjustment'):
         """

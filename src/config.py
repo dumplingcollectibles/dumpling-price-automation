@@ -42,6 +42,12 @@ class Config:
     ZOHO_EMAIL = os.getenv('ZOHO_EMAIL')
     ZOHO_APP_PASSWORD = os.getenv('ZOHO_APP_PASSWORD')
     EMAIL_TO = os.getenv('EMAIL_TO', ZOHO_EMAIL)
+    EMAIL_FROM = os.getenv('EMAIL_FROM', ZOHO_EMAIL)
+    FROM_NAME = os.getenv('FROM_NAME', STORE_NAME)
+    
+    ZOHO_SMTP_HOST = os.getenv('ZOHO_SMTP_HOST', 'smtp.zoho.com')
+    ZOHO_SMTP_PORT = int(os.getenv('ZOHO_SMTP_PORT', 587))
+    
     SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL')
 
     # ----------------------------------------------------------------------

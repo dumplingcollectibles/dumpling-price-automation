@@ -13,15 +13,10 @@ import sys
 import argparse
 from src.store_credit.store_credit_service import StoreCreditService
 from src.config import config
+from src.store_credit.store_credit_config import store_credit_config
 
 def format_transaction_type(trans_type):
-    types = {
-        'buylist_payout': '💰 Buylist Payout',
-        'order_payment': '🛒 Order Payment',
-        'adjustment': '✏️  Adjustment',
-        'refund': '↩️  Refund'
-    }
-    return types.get(trans_type, trans_type)
+    return store_credit_config.TRANSACTION_TYPE_DESCRIPTIONS.get(trans_type, trans_type)
 
 
 def handle_check(args, service):
@@ -128,7 +123,7 @@ def main():
     issue_parser = subparsers.add_parser('issue', help='Issue or adjust store credit')
     issue_parser.add_argument('--email', required=True, help='Customer email address')
     issue_parser.add_argument('--amount', required=True, type=float, help='Amount (CAD)')
-    issue_parser.add_argument('--type', required=True, choices=['buylist_payout', 'refund', 'adjustment', 'promotion', 'order_payment'], help='Transaction type')
+    issue_parser.add_argument('--type', required=True, choices=store_credit_config.VALID_TRANSACTION_TYPES, help='Transaction type')
     issue_parser.add_argument('--notes', required=False, default="", help='Reason for adjustment')
     issue_parser.add_argument('--buylist-id', type=str, default="", help='Buylist ID reference (optional)')
     issue_parser.add_argument('--gift-card', action='store_true', help='Generate Shopify gift card')
