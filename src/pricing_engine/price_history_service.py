@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from src.config import config
+from src.pricing_engine.pricing_config import pricing_config
 
 class PriceHistoryService:
     """
@@ -126,7 +127,7 @@ class PriceHistoryService:
             diff = new_price - old_price
             diff_pct = (diff / old_price * 100) if old_price > 0 else 0
             
-            is_significant = abs(diff_pct) >= 5.0 or abs(diff) >= 2.00
+            is_significant = abs(diff_pct) >= pricing_config.REPORTING_MIN_CHANGE_PERCENT or abs(diff) >= pricing_config.REPORTING_MIN_CHANGE_DOLLARS
             if not is_significant:
                 no_changes.append(card)
                 continue

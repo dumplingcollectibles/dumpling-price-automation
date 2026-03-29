@@ -4,6 +4,7 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from src.config import config
+from src.pricing_engine.pricing_config import pricing_config
 
 class PricingService:
     """
@@ -11,12 +12,6 @@ class PricingService:
     Handles algorithmic logic (10% margins, buylist cash matrices),
     threshold calculations, and isolated raw API/Database access.
     """
-    
-    # Internal pricing domain thresholds
-    MIN_CHANGE_DOLLARS = 0.50
-    MIN_CHANGE_PERCENT = 5.0
-    BIG_CHANGE_DOLLARS = 10.0
-    BIG_CHANGE_PERCENT = 20.0
 
     @staticmethod
     def get_db_connection():
@@ -41,22 +36,22 @@ class PricingService:
 
     @staticmethod
     def calculate_buylist_prices(market_price, condition, nm_buy_cash=None, nm_buy_credit=None):
-        """Core math algorithm determining C2B trade payouts"""
-        if condition in ['HP', 'DMG']:
+        """Core math algorithm determining C2B trade payouts leveraging config constraints"""
+        if condition in pricing_config.BUYLIST_UNSUPPORTED_CONDITIONS:
             return None, None
         
         if condition == 'NM':
             if market_price < 50:
-                cash_pct, credit_pct = 0.60, 0.70
+                cash_pct, credit_pct = pricing_config.BUYLIST_NM_UNDER_50_CASH, pricing_config.BUYLIST_NM_UNDER_50_CREDIT
             elif market_price < 100:
-                cash_pct, credit_pct = 0.70, 0.80
+                cash_pct, credit_pct = pricing_config.BUYLIST_NM_50_TO_100_CASH, pricing_config.BUYLIST_NM_50_TO_100_CREDIT
             else:
-                cash_pct, credit_pct = 0.75, 0.85
+                cash_pct, credit_pct = pricing_config.BUYLIST_NM_OVER_100_CASH, pricing_config.BUYLIST_NM_OVER_100_CREDIT
             return int((market_price * cash_pct) * 2) / 2, int((market_price * credit_pct) * 2) / 2
         elif condition == 'LP':
-            return round(nm_buy_cash * 0.75, 2), round(nm_buy_credit * 0.75, 2)
+            return round(nm_buy_cash * pricing_config.BUYLIST_LP_MODIFIER, 2), round(nm_buy_credit * pricing_config.BUYLIST_LP_MODIFIER, 2)
         elif condition == 'MP':
-            return round(nm_buy_cash * 0.50, 2), round(nm_buy_credit * 0.50, 2)
+            return round(nm_buy_cash * pricing_config.BUYLIST_MP_MODIFIER, 2), round(nm_buy_credit * pricing_config.BUYLIST_MP_MODIFIER, 2)
         return None, None
 
     @classmethod
@@ -65,7 +60,7 @@ class PricingService:
             return True
         dollar_change = abs(new_price - old_price)
         percent_change = (dollar_change / old_price) * 100
-        return dollar_change >= cls.MIN_CHANGE_DOLLARS and percent_change >= cls.MIN_CHANGE_PERCENT
+        return dollar_change >= pricing_config.MIN_PRICE_CHANGE_DOLLARS and percent_change >= pricing_config.MIN_PRICE_CHANGE_PERCENT
 
     @classmethod
     def is_big_change(cls, old_price, new_price):
@@ -73,7 +68,7 @@ class PricingService:
             return False
         dollar_change = abs(new_price - old_price)
         percent_change = (dollar_change / old_price) * 100
-        return dollar_change >= cls.BIG_CHANGE_DOLLARS and percent_change >= cls.BIG_CHANGE_PERCENT
+        return dollar_change >= pricing_config.BIG_CHANGE_DOLLARS and percent_change >= pricing_config.BIG_CHANGE_PERCENT
 
     def fetch_api_price(self, external_id, retries=5):
         url = f"{config.POKEMONTCG_API_URL}/cards/{external_id}"
@@ -143,7 +138,7 @@ class PricingService:
             """, (card_id,))
             
             variants = cursor.fetchall()
-            condition_multipliers = {'NM': 1.00, 'LP': 0.80, 'MP': 0.65, 'HP': 0.50, 'DMG': 0.35}
+            condition_multipliers = pricing_config.CONDITION_MULTIPLIERS
             nm_buy_cash, nm_buy_credit = self.calculate_buylist_prices(base_market_cad, 'NM')
             
             for variant in variants:
